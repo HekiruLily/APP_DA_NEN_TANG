@@ -10,6 +10,7 @@ import { colors } from '../theme/colors';
 
 
 import { LoginScreen } from '../screens/LoginScreen';
+import { RegisterScreen } from '../screens/RegisterScreen';
 import { HomeScreen } from '../screens/HomeScreen';
 import { ContactsScreen } from '../screens/ContactsScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
@@ -130,6 +131,7 @@ export const RootNavigator: React.FC = () => {
           animation: 'slide_from_right',
         }}>
         <Stack.Screen name="Login" component={LoginScreen} />
+        <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name="MainTabs" component={MainTabNavigator} />
         <Stack.Screen
           name="ChatDetail"

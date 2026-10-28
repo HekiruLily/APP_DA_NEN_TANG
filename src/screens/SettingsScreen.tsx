@@ -32,8 +32,12 @@ export const SettingsScreen: React.FC = () => {
         {
           text: 'Đăng xuất',
           style: 'destructive',
-          onPress: () => {
-            logout();
+          onPress: async () => {
+            try {
+              await logout();
+            } catch (e) {
+              console.warn('Logout error:', e);
+            }
             navigation.reset({
               index: 0,
               routes: [{ name: 'Login' }],
@@ -52,12 +56,10 @@ export const SettingsScreen: React.FC = () => {
         style={styles.container}
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}>
-        {}
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Cài đặt</Text>
         </View>
 
-        {}
         <View style={styles.profileCard}>
           <View style={styles.profileAvatarContainer}>
             <Image source={{ uri: user.avatar }} style={styles.profileAvatar} />
@@ -65,20 +67,19 @@ export const SettingsScreen: React.FC = () => {
           </View>
 
           <View style={styles.profileInfo}>
-            <Text style={styles.profileName}>{user.name}</Text>
-            <Text style={styles.profileEmail}>{user.email || 'user@example.com'}</Text>
-            <Text style={styles.profilePhone}>{user.phone || '0987 654 321'}</Text>
+            <Text style={styles.profileName}>{user.name || 'Người dùng'}</Text>
+            <Text style={styles.profileEmail}>{user.email || ''}</Text>
+            <Text style={styles.profilePhone}>🟢 Đang hoạt động</Text>
           </View>
         </View>
 
-        {}
+        
         
 
-        {}
+        
         <View style={styles.section}>
           <Text style={styles.sectionHeader}>TÙY CHỈNH ỨNG DỤNG</Text>
 
-          {}
           <View style={styles.settingRow}>
             <View style={styles.settingIconWrapper}>
               <Text style={styles.settingEmoji}>🔔</Text>
@@ -95,7 +96,6 @@ export const SettingsScreen: React.FC = () => {
             />
           </View>
 
-          {}
           <View style={styles.settingRow}>
             <View style={styles.settingIconWrapper}>
               <Text style={styles.settingEmoji}>🔊</Text>

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList, Conversation } from '../types';
+import { RootStackParamList, Conversation, User } from '../types';
 import { useApp } from '../context/AppContext';
 import { colors } from '../theme/colors';
 
@@ -20,41 +20,56 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 export const HomeScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
-  const { conversations, markConversationAsRead } = useApp();
+  const { conversations, markConversationAsRead, contacts } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
 
-  
   const filteredConversations = conversations.filter(conv => {
     const query = searchQuery.toLowerCase().trim();
     if (!query) return true;
+    const name = conv.user?.name || '';
+    const lastMsg = conv.lastMessage || '';
     return (
-      conv.user.name.toLowerCase().includes(query) ||
-      conv.lastMessage.toLowerCase().includes(query)
+      name.toLowerCase().includes(query) ||
+      lastMsg.toLowerCase().includes(query)
     );
   });
 
   const handleOpenChat = (conversation: Conversation) => {
-    
-    markConversationAsRead(conversation.id);
-    
+    const otherUserId = conversation.user?.id || conversation.id;
+    markConversationAsRead(otherUserId);
+
+    const targetUser: User = conversation.user || {
+      id: otherUserId,
+      name: 'Người dùng',
+      avatar: 'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128',
+      isOnline: false,
+    };
+
     navigation.navigate('ChatDetail', {
       conversationId: conversation.id,
-      user: conversation.user,
+      user: targetUser,
     });
   };
 
   const renderConversationItem = ({ item }: { item: Conversation }) => {
-    const hasUnread = item.unreadCount > 0;
+    const hasUnread = (item.unreadCount || 0) > 0;
+    const targetUserId = item.user?.id || item.id;
+    const liveContact = contacts.find(c => c.id === targetUserId);
+    const isOnline = liveContact ? liveContact.isOnline : (item.user?.isOnline ?? false);
+    const avatar =
+      liveContact?.avatar ||
+      item.user?.avatar ||
+      'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128';
+    const userName = liveContact?.name || item.user?.name || 'Người dùng';
 
     return (
       <TouchableOpacity
         style={[styles.chatItem, hasUnread && styles.chatItemUnread]}
         onPress={() => handleOpenChat(item)}
         activeOpacity={0.7}>
-        {}
         <View style={styles.avatarContainer}>
-          <Image source={{ uri: item.user.avatar }} style={styles.avatar} />
-          {item.user.isOnline && <View style={styles.onlineDot} />}
+          <Image source={{ uri: avatar }} style={styles.avatar} />
+          {isOnline && <View style={styles.onlineDot} />}
         </View>
 
         {}
@@ -63,7 +78,7 @@ export const HomeScreen: React.FC = () => {
             <Text
               style={[styles.userName, hasUnread && styles.userNameBold]}
               numberOfLines={1}>
-              {item.user.name}
+              {userName}
             </Text>
             <Text
               style={[styles.timestamp, hasUnread && styles.timestampUnread]}>

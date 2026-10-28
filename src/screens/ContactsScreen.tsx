@@ -26,9 +26,11 @@ export const ContactsScreen: React.FC = () => {
 
   
   const filteredContacts = contacts.filter(contact => {
+    const query = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      contact.name.toLowerCase().includes(searchQuery.toLowerCase().trim()) ||
-      (contact.phone && contact.phone.includes(searchQuery.trim()));
+      contact.name.toLowerCase().includes(query) ||
+      (contact.email && contact.email.toLowerCase().includes(query)) ||
+      (contact.phone && contact.phone.includes(query));
 
     if (filterOnlineOnly) {
       return matchesSearch && contact.isOnline;

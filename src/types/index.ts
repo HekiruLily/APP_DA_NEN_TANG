@@ -15,6 +15,11 @@ export interface Message {
   text: string;
   timestamp: string;
   isMe: boolean;
+  type?: 'text' | 'location';
+  location?: {
+    latitude: number;
+    longitude: number;
+  };
 }
 
 export interface Conversation {
@@ -24,6 +29,7 @@ export interface Conversation {
   lastMessageTime: string;
   unreadCount: number;
   messages: Message[];
+  updatedAt?: number;
 }
 
 export interface AppNotification {
@@ -44,6 +50,7 @@ export interface UserSettings {
 
 export type RootStackParamList = {
   Login: undefined;
+  Register: undefined;
   MainTabs: undefined;
   ChatDetail: {
     conversationId?: string;

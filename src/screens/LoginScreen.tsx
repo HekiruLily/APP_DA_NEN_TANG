@@ -9,13 +9,14 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../types';
 import { useApp } from '../context/AppContext';
 import { colors } from '../theme/colors';
+import { getAuthErrorMessage } from '../services/authService';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
 
@@ -23,19 +24,19 @@ export const LoginScreen: React.FC = () => {
   const navigation = useNavigation<NavigationProp>();
   const { login } = useApp();
 
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   const [secureText, setSecureText] = useState(true);
 
-  const handleLogin = () => {
-    
-    if (!username.trim() && !password.trim()) {
-      setErrorMessage('Vui lòng nhập tài khoản và mật khẩu!');
+  const handleLogin = async () => {
+    if (!email.trim() && !password.trim()) {
+      setErrorMessage('Vui lòng nhập email và mật khẩu!');
       return;
     }
-    if (!username.trim()) {
-      setErrorMessage('Tài khoản không được để trống!');
+    if (!email.trim()) {
+      setErrorMessage('Email không được để trống!');
       return;
     }
     if (!password.trim()) {
@@ -44,12 +45,20 @@ export const LoginScreen: React.FC = () => {
     }
 
     setErrorMessage('');
-    login(username.trim());
-    
-    navigation.reset({
-      index: 0,
-      routes: [{ name: 'MainTabs' }],
-    });
+    setIsLoading(true);
+
+    try {
+      await login(email.trim(), password);
+      navigation.reset({
+        index: 0,
+        routes: [{ name: 'MainTabs' }],
+      });
+    } catch (err: any) {
+      console.warn('Login error:', err);
+      setErrorMessage(getAuthErrorMessage(err));
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -60,6 +69,7 @@ export const LoginScreen: React.FC = () => {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled">
+        {}
         <View style={styles.headerContainer}>
           <View style={styles.logoBadge}>
             <Text style={styles.logoIcon}>💬</Text>
@@ -67,6 +77,7 @@ export const LoginScreen: React.FC = () => {
           <Text style={styles.appName}>ChatConnect</Text>
         </View>
 
+        {}
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Đăng nhập</Text>
 
@@ -77,24 +88,27 @@ export const LoginScreen: React.FC = () => {
             </View>
           ) : null}
 
+          {}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Tài khoản / Email</Text>
+            <Text style={styles.label}>Email</Text>
             <View style={styles.inputWrapper}>
-              <Text style={styles.inputIcon}>👤</Text>
+              <Text style={styles.inputIcon}>✉️</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Nhập tên tài khoản hoặc email..."
+                placeholder="Nhập địa chỉ email của bạn..."
                 placeholderTextColor={colors.textMuted}
-                value={username}
+                value={email}
                 onChangeText={text => {
-                  setUsername(text);
+                  setEmail(text);
                   if (errorMessage) setErrorMessage('');
                 }}
+                keyboardType="email-address"
                 autoCapitalize="none"
               />
             </View>
           </View>
 
+          {}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Mật khẩu</Text>
             <View style={styles.inputWrapper}>
@@ -119,12 +133,26 @@ export const LoginScreen: React.FC = () => {
             </View>
           </View>
 
+          {}
           <TouchableOpacity
-            style={styles.loginButton}
+            style={[styles.loginButton, isLoading && styles.buttonDisabled]}
             onPress={handleLogin}
+            disabled={isLoading}
             activeOpacity={0.8}>
-            <Text style={styles.loginButtonText}>Đăng nhập</Text>
+            {isLoading ? (
+              <ActivityIndicator color={colors.textWhite} size="small" />
+            ) : (
+              <Text style={styles.loginButtonText}>Đăng nhập</Text>
+            )}
           </TouchableOpacity>
+
+          {}
+          <View style={styles.footerRow}>
+            <Text style={styles.footerText}>Chưa có tài khoản? </Text>
+            <TouchableOpacity onPress={() => navigation.navigate('Register')}>
+              <Text style={styles.linkText}>Đăng ký ngay</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -169,6 +197,11 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     letterSpacing: 0.5,
   },
+  appSubtitle: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginTop: 4,
+  },
   card: {
     backgroundColor: colors.card,
     borderRadius: 20,
@@ -185,7 +218,7 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '700',
     color: colors.textPrimary,
-    marginBottom: 6,
+    marginBottom: 16,
   },
   errorBanner: {
     flexDirection: 'row',
@@ -254,13 +287,27 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 4,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   loginButtonText: {
     color: colors.textWhite,
     fontSize: 16,
     fontWeight: '700',
   },
-  footer: {
-    marginTop: 28,
+  footerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 20,
+  },
+  footerText: {
+    fontSize: 13.5,
+    color: colors.textSecondary,
+  },
+  linkText: {
+    fontSize: 13.5,
+    fontWeight: '700',
+    color: colors.primary,
   },
 });
