@@ -110,7 +110,7 @@ export const CreateGroupScreen: React.FC = () => {
           </Text>
         </View>
 
-        {/* Checkbox tùy chỉnh */}
+        {}
         <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
           {isSelected && <Text style={styles.checkmarkIcon}>✓</Text>}
         </View>
@@ -124,7 +124,7 @@ export const CreateGroupScreen: React.FC = () => {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.container}>
-        {/* HEADER */}
+        {}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -146,7 +146,7 @@ export const CreateGroupScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* Ô NHẬP TÊN NHÓM */}
+        {}
         <View style={styles.groupNameContainer}>
           <View style={styles.groupIconWrapper}>
             <Text style={styles.groupIcon}>👥</Text>
@@ -161,7 +161,7 @@ export const CreateGroupScreen: React.FC = () => {
           />
         </View>
 
-        {/* THANH TÌM KIẾM THÀNH VIÊN */}
+        {}
         <View style={styles.searchContainer}>
           <View style={styles.searchBar}>
             <Text style={styles.searchIcon}>🔍</Text>
@@ -180,7 +180,7 @@ export const CreateGroupScreen: React.FC = () => {
           </View>
         </View>
 
-        {/* THÔNG TIN SỐ LƯỢNG ĐÃ CHỌN */}
+        {}
         <View style={styles.selectionInfoRow}>
           <Text style={styles.selectionCountText}>
             Đã chọn: <Text style={styles.highlightCount}>{selectedUserIds.length}</Text> thành viên
@@ -188,7 +188,7 @@ export const CreateGroupScreen: React.FC = () => {
           <Text style={styles.selectionReqText}>(Tối thiểu 2 người)</Text>
         </View>
 
-        {/* DANH SÁCH DANH BẠ ĐỂ CHỌN */}
+        {}
         <FlatList
           data={filteredContacts}
           keyExtractor={item => item.id}

@@ -37,7 +37,7 @@ export const HomeScreen: React.FC = () => {
   const handleOpenChat = (conversation: Conversation) => {
     markConversationAsRead(conversation.id);
 
-    const isGroup = conversation.type === 'group';
+    const isGroup = conversation.type === 'group' || conversation.id.startsWith('-');
     const targetUser: User = conversation.user || {
       id: conversation.id,
       name: conversation.name || 'Nhóm trò chuyện',
@@ -51,23 +51,24 @@ export const HomeScreen: React.FC = () => {
       conversationId: conversation.id,
       convType: isGroup ? 'group' : 'direct',
       name: isGroup ? (conversation.name || 'Nhóm trò chuyện') : targetUser.name,
-      user: targetUser,
+      user: isGroup ? undefined : targetUser,
     });
   };
 
   const renderConversationItem = ({ item }: { item: Conversation }) => {
-    const isGroup = item.type === 'group';
+    const isGroup = item.type === 'group' || item.id.startsWith('-');
     const hasUnread = (item.unreadCount || 0) > 0;
     const targetUserId = item.user?.id || item.id;
     const liveContact = !isGroup ? contacts.find(c => c.id === targetUserId) : null;
     const isOnline = liveContact ? liveContact.isOnline : false;
-    const avatar =
-      item.user?.avatar ||
-      liveContact?.avatar ||
-      'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128';
     const userName = isGroup
       ? (item.name || 'Nhóm trò chuyện')
       : (liveContact?.name || item.user?.name || 'Người dùng');
+    const avatar = isGroup
+      ? (item.user?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=6366F1&color=fff&size=128`)
+      : (liveContact?.avatar ||
+        item.user?.avatar ||
+        'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128');
 
     const rawLastMsg = item.lastMessage || '';
     let displayLastMsg = rawLastMsg;
@@ -96,7 +97,7 @@ export const HomeScreen: React.FC = () => {
           )}
         </View>
 
-        {/* Thông tin cuộc trò chuyện */}
+        {}
         <View style={styles.chatDetails}>
           <View style={styles.chatHeaderRow}>
             <View style={styles.nameWithGroupRow}>

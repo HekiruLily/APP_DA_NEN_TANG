@@ -9,10 +9,7 @@ export interface UploadResult {
   height?: number;
 }
 
-/**
- * Tải ảnh lên Cloudinary bằng Unsigned Upload Preset
- * KHÔNG sử dụng API Secret
- */
+
 export const uploadImageToCloudinary = async (
   fileUri: string,
   fileName?: string,

@@ -14,18 +14,14 @@ import {
   endBefore,
 } from 'firebase/database';
 import { db } from './firebase';
-import { User, Conversation, Message } from '../types';
+import { User, Conversation, Message, QuotedMessage } from '../types';
 
-/**
- * Tạo chatId chuẩn cho chat 1-1 theo alphabet uid
- */
+
 export const getChatId = (uid1: string, uid2: string): string => {
   return uid1 < uid2 ? `${uid1}_${uid2}` : `${uid2}_${uid1}`;
 };
 
-/**
- * Format timestamp thành giờ:phút
- */
+
 export const formatMessageTime = (timestamp?: number): string => {
   const d = timestamp ? new Date(timestamp) : new Date();
   const hours = d.getHours().toString().padStart(2, '0');
@@ -33,10 +29,6 @@ export const formatMessageTime = (timestamp?: number): string => {
   return `${hours}:${minutes}`;
 };
 
-/**
- * Format trạng thái hoạt động của đối phương
- * Ví dụ: "Hoạt động 5 phút trước", "Hoạt động 2 giờ trước", v.v.
- */
 export const formatLastSeen = (lastSeen?: number): string => {
   if (!lastSeen) return 'Ngoại tuyến';
   const now = Date.now();
@@ -62,140 +54,149 @@ export const formatLastSeen = (lastSeen?: number): string => {
   return `Hoạt động ngày ${day}/${month}`;
 };
 
-/**
- * Cấu hình presence: tự cập nhật online/offline và lastSeen
- * Sử dụng onDisconnect để không bị kẹt khi đóng app đột ngột
- */
+
 export const setupPresence = (uid: string) => {
   const userStatusRef = ref(db, `users/${uid}/isOnline`);
   const userStatusTextRef = ref(db, `users/${uid}/statusText`);
   const userLastSeenRef = ref(db, `users/${uid}/lastSeen`);
   const connectedRef = ref(db, '.info/connected');
 
-  const unsubscribe = onValue(connectedRef, snapshot => {
-    if (snapshot.val() === true) {
-      onDisconnect(userStatusRef).set(false);
-      onDisconnect(userStatusTextRef).set('Ngoại tuyến');
-      onDisconnect(userLastSeenRef).set(serverTimestamp());
+  const unsubscribe = onValue(
+    connectedRef,
+    snapshot => {
+      if (snapshot.val() === true) {
+        onDisconnect(userStatusRef).set(false);
+        onDisconnect(userStatusTextRef).set('Ngoại tuyến');
+        onDisconnect(userLastSeenRef).set(serverTimestamp());
 
-      set(userStatusRef, true);
-      set(userStatusTextRef, 'Trực tuyến');
+        set(userStatusRef, true);
+        set(userStatusTextRef, 'Trực tuyến');
+      }
+    },
+    error => {
+      console.warn('setupPresence connected error:', error.message);
     }
-  });
+  );
 
   return unsubscribe;
 };
 
-/**
- * Lắng nghe danh sách người dùng cho màn hình Danh bạ
- */
+
 export const listenUsers = (
   currentUid: string,
   callback: (users: User[]) => void
 ) => {
   const usersRef = ref(db, 'users');
 
-  const unsubscribe = onValue(usersRef, snapshot => {
-    const users: User[] = [];
-    if (snapshot.exists()) {
-      snapshot.forEach(child => {
-        const u = child.val();
-        if (child.key !== currentUid) {
-          users.push({
-            id: child.key as string,
-            name: u.name || 'Người dùng',
-            email: u.email || '',
-            avatar:
-              u.avatar ||
-              `https://ui-avatars.com/api/?name=${encodeURIComponent(
-                u.name || 'User'
-              )}&background=4F46E5&color=fff&size=128`,
-            isOnline: !!u.isOnline,
-            statusText: u.isOnline ? 'Trực tuyến' : 'Ngoại tuyến',
-            phone: u.phone,
-            lastSeen: typeof u.lastSeen === 'number' ? u.lastSeen : undefined,
-          });
-        }
-      });
+  const unsubscribe = onValue(
+    usersRef,
+    snapshot => {
+      const users: User[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach(child => {
+          const u = child.val();
+          if (child.key !== currentUid) {
+            users.push({
+              id: child.key as string,
+              name: u.name || 'Người dùng',
+              email: u.email || '',
+              avatar:
+                u.avatar ||
+                `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                  u.name || 'User'
+                )}&background=4F46E5&color=fff&size=128`,
+              isOnline: !!u.isOnline,
+              statusText: u.isOnline ? 'Trực tuyến' : 'Ngoại tuyến',
+              phone: u.phone,
+              lastSeen: typeof u.lastSeen === 'number' ? u.lastSeen : undefined,
+            });
+          }
+        });
+      }
+      callback(users);
+    },
+    error => {
+      console.warn('listenUsers error:', error.message);
+      callback([]);
     }
-    callback(users);
-  });
+  );
 
   return unsubscribe;
 };
 
-/**
- * Lắng nghe trạng thái realtime của một user
- */
+
 export const listenUserStatus = (
   uid: string,
   callback: (user: Partial<User>) => void
 ) => {
   const userRef = ref(db, `users/${uid}`);
-  const unsubscribe = onValue(userRef, snapshot => {
-    if (snapshot.exists()) {
-      const val = snapshot.val();
-      callback({
-        id: uid,
-        name: val.name,
-        isOnline: !!val.isOnline,
-        statusText: val.isOnline ? 'Trực tuyến' : 'Ngoại tuyến',
-        avatar: val.avatar,
-        lastSeen: typeof val.lastSeen === 'number' ? val.lastSeen : undefined,
-      });
+  const unsubscribe = onValue(
+    userRef,
+    snapshot => {
+      if (snapshot.exists()) {
+        const val = snapshot.val();
+        callback({
+          id: uid,
+          name: val.name,
+          isOnline: !!val.isOnline,
+          statusText: val.isOnline ? 'Trực tuyến' : 'Ngoại tuyến',
+          avatar: val.avatar,
+          lastSeen: typeof val.lastSeen === 'number' ? val.lastSeen : undefined,
+        });
+      }
+    },
+    error => {
+      console.warn('listenUserStatus error:', error.message);
     }
-  });
+  );
   return unsubscribe;
 };
 
-/**
- * Đảm bảo node conversations/{convId} tồn tại
- */
 export const ensureConversation = async (
   convId: string,
   currentUid: string,
   otherUid?: string,
   otherUser?: Partial<User>
 ) => {
-  const convRef = ref(db, `conversations/${convId}`);
-  const snap = await get(convRef);
-  if (!snap.exists()) {
-    const membersMap: Record<string, boolean> = {
-      [currentUid]: true,
-    };
-    if (otherUid) {
-      membersMap[otherUid] = true;
+  try {
+    const convRef = ref(db, `conversations/${convId}`);
+    const snap = await get(convRef);
+    if (!snap.exists()) {
+      const membersMap: Record<string, boolean> = {
+        [currentUid]: true,
+      };
+      if (otherUid) {
+        membersMap[otherUid] = true;
+      }
+
+      await set(convRef, {
+        type: 'direct',
+        name: otherUser?.name || 'Direct Chat',
+        members: membersMap,
+        createdBy: currentUid,
+        createdAt: Date.now(),
+        lastMessage: '',
+        updatedAt: Date.now(),
+      });
     }
-
-    await set(convRef, {
-      type: 'direct',
-      name: otherUser?.name || 'Direct Chat',
-      members: membersMap,
-      createdBy: currentUid,
-      createdAt: Date.now(),
-      lastMessage: '',
-      updatedAt: Date.now(),
-    });
+  } catch (err: any) {
+    console.warn('ensureConversation error:', err?.message || err);
   }
 };
 
-/**
- * Lấy thông tin chi tiết của một cuộc trò chuyện
- */
 export const getConversationDetails = async (convId: string) => {
-  const snap = await get(ref(db, `conversations/${convId}`));
-  if (snap.exists()) {
-    return snap.val();
+  try {
+    const snap = await get(ref(db, `conversations/${convId}`));
+    if (snap.exists()) {
+      return snap.val();
+    }
+    return null;
+  } catch (err: any) {
+    console.warn('getConversationDetails error:', err?.message || err);
+    return null;
   }
-  return null;
 };
 
-/**
- * Gửi tin nhắn bằng MỘT LỆNH update() multi-path update nguyên tử:
- * - Hỗ trợ cả Direct Chat và Group Chat
- * - Tăng số chưa đọc unread của các thành viên khác bằng increment(1)
- * - Nếu thành viên không ở trong cuộc trò chuyện (kiểm tra activeChat/{uid}), ghi thông báo vào notifications/{uid}
- */
 export const sendMessage = async ({
   convId,
   sender,
@@ -204,6 +205,7 @@ export const sendMessage = async ({
   type = 'text',
   location,
   imageUrl,
+  replyTo,
 }: {
   convId: string;
   sender: User;
@@ -212,6 +214,7 @@ export const sendMessage = async ({
   type?: 'text' | 'image' | 'location';
   location?: { latitude: number; longitude: number };
   imageUrl?: string;
+  replyTo?: QuotedMessage;
 }) => {
   const now = Date.now();
   const timeStr = formatMessageTime(now);
@@ -232,12 +235,14 @@ export const sendMessage = async ({
 
   // Lấy thông tin cuộc trò chuyện để biết danh sách thành viên và tên nhóm
   let convData = await getConversationDetails(convId);
-  if (!convData) {
+  const isGroupId = convId.startsWith('-');
+
+  if (!convData && !isGroupId) {
     await ensureConversation(convId, sender.id, recipient?.id, recipient);
     convData = await getConversationDetails(convId);
   }
 
-  const isGroup = convData?.type === 'group';
+  const isGroup = isGroupId || convData?.type === 'group';
   const groupName = convData?.name || 'Nhóm';
   const membersMap: Record<string, boolean> = convData?.members || {
     [sender.id]: true,
@@ -261,6 +266,7 @@ export const sendMessage = async ({
     recalled: false,
     timestamp: timeStr,
     reactions: null,
+    replyTo: replyTo || null,
   };
 
   // Multi-path update trong MỘT LỆNH duy nhất
@@ -342,11 +348,7 @@ export const sendMessage = async ({
   await update(ref(db), updates);
 };
 
-/**
- * Thu hồi tin nhắn:
- * - Đánh dấu recalled: true
- * - Nếu là tin nhắn cuối của cuộc trò chuyện, cập nhật dòng tin cuối ở màn hình Home của TẤT CẢ thành viên
- */
+
 export const recallMessage = async ({
   convId,
   messageId,
@@ -377,11 +379,7 @@ export const recallMessage = async ({
   await update(ref(db), updates);
 };
 
-/**
- * Thả / hủy cảm xúc trên tin nhắn
- * - reactions/{uid} = emoji hoặc null
- * - Ghi thông báo cho người gửi tin nhắn nếu thả cảm xúc
- */
+
 export const toggleReaction = async ({
   convId,
   messageId,
@@ -426,55 +424,58 @@ export const toggleReaction = async ({
   await update(ref(db), updates);
 };
 
-/**
- * Cập nhật trạng thái đang gõ (typing)
- * Dùng onDisconnect để tự xoá nếu app bị tắt đột ngột
- */
+
 export const setTypingStatus = async (
   convId: string,
   uid: string,
   isTyping: boolean
 ) => {
   if (!convId || !uid) return;
-  const typingRef = ref(db, `typing/${convId}/${uid}`);
-  if (isTyping) {
-    onDisconnect(typingRef).remove();
-    await set(typingRef, true);
-  } else {
-    await set(typingRef, null);
+  try {
+    const typingRef = ref(db, `typing/${convId}/${uid}`);
+    if (isTyping) {
+      onDisconnect(typingRef).remove();
+      await set(typingRef, true);
+    } else {
+      await set(typingRef, null);
+    }
+  } catch (err) {
+    // Ignore typing error to prevent unhandled rejection
   }
 };
 
-/**
- * Lắng nghe trạng thái đang gõ trong cuộc trò chuyện:
- * - Hỗ trợ cả chat 1-1 và nhóm (trả về danh sách tên những người đang gõ)
- */
+
 export const listenTyping = (
   convId: string,
   currentUid: string,
   callback: (typingUids: string[]) => void
 ) => {
   const typingRef = ref(db, `typing/${convId}`);
-  const unsubscribe = onValue(typingRef, snapshot => {
-    const list: string[] = [];
-    if (snapshot.exists()) {
-      snapshot.forEach(child => {
-        if (child.key !== currentUid && child.val() === true) {
-          list.push(child.key as string);
-        }
-      });
+  const unsubscribe = onValue(
+    typingRef,
+    snapshot => {
+      const list: string[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach(child => {
+          if (child.key !== currentUid && child.val() === true) {
+            list.push(child.key as string);
+          }
+        });
+      }
+      callback(list);
+    },
+    error => {
+      console.warn('listenTyping error:', error.message);
+      callback([]);
     }
-    callback(list);
-  });
+  );
   return unsubscribe;
 };
 
-/**
- * Cập nhật thời điểm đọc cuối của user
- * Ghi vào readStatus/{convId}/{uid} và reset unread trong userChats
- */
 export const updateReadStatus = async (convId: string, uid: string) => {
   if (!convId || !uid) return;
+  // Chặn các convId không hợp lệ (ví dụ push ID bị nối với uid '-P..._uid')
+  if (convId.startsWith('-') && convId.includes('_')) return;
   const now = Date.now();
   const updates: Record<string, any> = {};
   updates[`readStatus/${convId}/${uid}`] = now;
@@ -486,28 +487,30 @@ export const updateReadStatus = async (convId: string, uid: string) => {
   }
 };
 
-/**
- * Lắng nghe thời điểm đọc cuối của người kia trong chat 1-1
- */
+
 export const listenReadStatus = (
   convId: string,
   otherUid: string,
   callback: (lastReadTimestamp: number | null) => void
 ) => {
   const readRef = ref(db, `readStatus/${convId}/${otherUid}`);
-  const unsubscribe = onValue(readRef, snapshot => {
-    if (snapshot.exists()) {
-      callback(Number(snapshot.val()));
-    } else {
+  const unsubscribe = onValue(
+    readRef,
+    snapshot => {
+      if (snapshot.exists()) {
+        callback(Number(snapshot.val()));
+      } else {
+        callback(null);
+      }
+    },
+    error => {
+      console.warn('listenReadStatus error:', error.message);
       callback(null);
     }
-  });
+  );
   return unsubscribe;
 };
 
-/**
- * Parse snapshot message từ Firebase thành Message object
- */
 const parseMessageSnapshot = (
   key: string,
   val: any,
@@ -531,12 +534,10 @@ const parseMessageSnapshot = (
         : undefined,
     recalled: !!val.recalled,
     reactions: val.reactions || undefined,
+    replyTo: val.replyTo || undefined,
   };
 };
 
-/**
- * Lấy 20 tin nhắn mới nhất và lắng nghe realtime
- */
 export const listenMessagesPaginated = (
   convId: string,
   currentUid: string,
@@ -549,23 +550,28 @@ export const listenMessagesPaginated = (
     limitToLast(pageSize)
   );
 
-  const unsubscribe = onValue(messagesQuery, snapshot => {
-    const list: Message[] = [];
-    if (snapshot.exists()) {
-      snapshot.forEach(child => {
-        list.push(parseMessageSnapshot(child.key as string, child.val(), currentUid));
-      });
+  const unsubscribe = onValue(
+    messagesQuery,
+    snapshot => {
+      const list: Message[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach(child => {
+          list.push(parseMessageSnapshot(child.key as string, child.val(), currentUid));
+        });
+      }
+      list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      onInitialMessages(list);
+    },
+    error => {
+      console.warn('listenMessages error:', error.message);
+      onInitialMessages([]);
     }
-    list.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
-    onInitialMessages(list);
-  });
+  );
 
   return unsubscribe;
 };
 
-/**
- * Tải thêm 20 tin nhắn cũ hơn (phân trang khi kéo lên)
- */
+
 export const loadMoreOlderMessages = async (
   convId: string,
   currentUid: string,
@@ -591,33 +597,49 @@ export const loadMoreOlderMessages = async (
   return list;
 };
 
-/**
- * Lắng nghe danh sách cuộc trò chuyện ở userChats/{currentUid}
- * Hỗ trợ đồng thời cả chat 1-1 và chat nhóm, sắp xếp theo tin mới nhất
- */
 export const listenConversations = (
   currentUid: string,
   callback: (conversations: Conversation[]) => void
 ) => {
   const userChatsRef = ref(db, `userChats/${currentUid}`);
 
-  const unsubscribe = onValue(userChatsRef, snapshot => {
-    const list: Conversation[] = [];
-    if (snapshot.exists()) {
-      snapshot.forEach(child => {
-        const data = child.val();
-        if (!data) return;
+  const unsubscribe = onValue(
+    userChatsRef,
+    snapshot => {
+      const list: Conversation[] = [];
+      if (snapshot.exists()) {
+        snapshot.forEach(child => {
+          const data = child.val();
+          if (!data) return;
 
         const convId = child.key as string;
-        const isGroup = data.type === 'group';
+
+        // 1. Tự động loại bỏ key lỗi '-P6..._uid' (do lỗi getChatId với ID nhóm trước đây)
+        if (convId.startsWith('-') && convId.includes('_')) {
+          set(ref(db, `userChats/${currentUid}/${convId}`), null).catch(() => {});
+          return;
+        }
+
+        // 2. Bỏ qua các node rác chỉ có { unread: 0 } mà không có dữ liệu cuộc trò chuyện
+        if (!data.lastMessage && !data.updatedAt && !data.name && !data.otherUser) {
+          set(ref(db, `userChats/${currentUid}/${convId}`), null).catch(() => {});
+          return;
+        }
+
+        const isGroup = data.type === 'group' || (convId.startsWith('-') && !convId.includes('_'));
 
         if (isGroup) {
-          const groupName = data.name || 'Nhóm trò chuyện';
+          // Chỉ hiển thị nhóm hợp lệ có tên hoặc có tin nhắn
+          const groupName = data.name;
+          if (!groupName && !data.lastMessage) {
+            return;
+          }
+          const displayGroupName = groupName || 'Nhóm trò chuyện';
           const resolvedGroupUser: User = {
             id: convId,
-            name: groupName,
+            name: displayGroupName,
             avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-              groupName
+              displayGroupName
             )}&background=6366F1&color=fff&size=128`,
             isOnline: false,
           };
@@ -625,7 +647,7 @@ export const listenConversations = (
           list.push({
             id: convId,
             type: 'group',
-            name: groupName,
+            name: displayGroupName,
             user: resolvedGroupUser,
             lastMessage: data.lastMessage || '',
             lastMessageTime: data.updatedAt ? formatMessageTime(data.updatedAt) : '',
@@ -635,8 +657,18 @@ export const listenConversations = (
             updatedAt: data.updatedAt || 0,
           });
         } else {
+          // DIRECT CHAT
+          // Kiểm tra nếu key là dạng bare UID (không có '_' và không bắt đầu bằng '-')
+          const isBareUid = !convId.includes('_') && !convId.startsWith('-');
+          const actualConvId = isBareUid ? getChatId(currentUid, convId) : convId;
+
+          // Nếu đã tồn tại key chuẩn compound convId trong snapshot thì bỏ qua key bare UID trùng lặp này
+          if (isBareUid && snapshot.hasChild(actualConvId)) {
+            return;
+          }
+
           const otherData = data.otherUser || {};
-          const otherUserId = otherData.id || convId.replace(currentUid, '').replace('_', '');
+          const otherUserId = otherData.id || (isBareUid ? convId : convId.replace(currentUid, '').replace('_', ''));
 
           const resolvedUser: User = {
             id: otherUserId,
@@ -650,7 +682,7 @@ export const listenConversations = (
           };
 
           list.push({
-            id: convId,
+            id: actualConvId,
             type: 'direct',
             user: resolvedUser,
             lastMessage: data.lastMessage || '',
@@ -666,14 +698,15 @@ export const listenConversations = (
 
     list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
     callback(list);
+  },
+  error => {
+    console.warn('listenConversations error:', error.message);
+    callback([]);
   });
 
   return unsubscribe;
 };
 
-/**
- * Đánh dấu đã đọc cuộc trò chuyện từ màn hình Home
- */
 export const markConversationAsRead = async (
   currentUid: string,
   convId: string

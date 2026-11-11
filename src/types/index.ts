@@ -10,6 +10,14 @@ export interface User {
   lastSeen?: number;
 }
 
+export interface QuotedMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  text: string;
+  type?: 'text' | 'image' | 'location' | 'system';
+}
+
 export interface Message {
   id: string;
   senderId: string;
@@ -18,7 +26,7 @@ export interface Message {
   timestamp: string;
   createdAt?: number;
   isMe: boolean;
-  type?: 'text' | 'image' | 'location';
+  type?: 'text' | 'image' | 'location' | 'system';
   imageUrl?: string;
   lat?: number;
   lng?: number;
@@ -28,6 +36,7 @@ export interface Message {
   };
   recalled?: boolean;
   reactions?: { [uid: string]: string };
+  replyTo?: QuotedMessage;
 }
 
 export interface Conversation {
@@ -49,6 +58,7 @@ export interface Conversation {
 export interface AppNotification {
   id: string;
   convId?: string;
+  groupName?: string;
   fromUid?: string;
   fromName?: string;
   text?: string;

@@ -10,24 +10,23 @@ import {
 import { db } from './firebase';
 import { AppNotification } from '../types';
 
-/**
- * Đặt trạng thái phòng chat đang mở của người dùng
- * Sử dụng onDisconnect để tự xoá khi app tắt đột ngột
- */
+
 export const setActiveChat = async (uid: string, convId: string | null) => {
   if (!uid) return;
-  const activeRef = ref(db, `activeChat/${uid}`);
-  if (convId) {
-    onDisconnect(activeRef).remove();
-    await set(activeRef, convId);
-  } else {
-    await set(activeRef, null);
+  try {
+    const activeRef = ref(db, `activeChat/${uid}`);
+    if (convId) {
+      onDisconnect(activeRef).remove();
+      await set(activeRef, convId);
+    } else {
+      await set(activeRef, null);
+    }
+  } catch (err) {
+    // Ignore activeChat error
   }
 };
 
-/**
- * Kiểm tra xem người dùng có đang mở phòng chat convId không
- */
+
 export const isUserInActiveChat = async (uid: string, convId: string): Promise<boolean> => {
   try {
     const snap = await get(ref(db, `activeChat/${uid}`));
@@ -37,9 +36,7 @@ export const isUserInActiveChat = async (uid: string, convId: string): Promise<b
   }
 };
 
-/**
- * Lắng nghe danh sách thông báo của người dùng theo thời gian thực
- */
+
 export const listenNotifications = (
   uid: string,
   callback: (notifications: AppNotification[]) => void
@@ -73,14 +70,15 @@ export const listenNotifications = (
     // Sắp xếp thông báo mới nhất lên đầu
     list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
     callback(list);
+  },
+  error => {
+    console.warn('listenNotifications error:', error.message);
+    callback([]);
   });
 
   return unsubscribe;
 };
 
-/**
- * Đánh dấu một thông báo là đã đọc
- */
 export const markNotificationAsRead = async (uid: string, notifId: string) => {
   if (!uid || !notifId) return;
   try {
@@ -91,9 +89,6 @@ export const markNotificationAsRead = async (uid: string, notifId: string) => {
   }
 };
 
-/**
- * Đánh dấu TẤT CẢ thông báo là đã đọc
- */
 export const markAllNotificationsAsRead = async (
   uid: string,
   notifications: AppNotification[]

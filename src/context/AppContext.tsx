@@ -5,7 +5,10 @@ import React, {
   useEffect,
   ReactNode,
 } from 'react';
-import { User, Conversation, Message, AppNotification, UserSettings } from '../types';
+import { User, Conversation, Message, AppNotification, UserSettings, QuotedMessage } from '../types';
+import { updateProfile } from 'firebase/auth';
+import { ref, update } from 'firebase/database';
+import { auth, db } from '../services/firebase';
 import {
   registerWithEmail,
   loginWithEmail,
@@ -45,8 +48,10 @@ interface AppContextType {
     type?: 'text' | 'location' | 'image',
     location?: { latitude: number; longitude: number },
     imageUrl?: string,
-    recipientUser?: User
+    recipientUser?: User,
+    replyTo?: QuotedMessage
   ) => Promise<void>;
+  updateUserProfile: (name: string, avatarUrl: string) => Promise<void>;
   markConversationAsRead: (convIdOrOtherUserId: string) => void;
   markNotificationAsRead: (id: string) => void;
   markAllNotificationsAsRead: () => void;
@@ -162,7 +167,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     type: 'text' | 'location' | 'image' = 'text',
     location?: { latitude: number; longitude: number },
     imageUrl?: string,
-    recipientUser?: User
+    recipientUser?: User,
+    replyTo?: QuotedMessage
   ) => {
     if (!user.id) return;
 
@@ -184,14 +190,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       type,
       location,
       imageUrl,
+      replyTo,
     });
+  };
+
+  const updateUserProfile = async (newName: string, newAvatarUrl: string) => {
+    if (!user.id) return;
+    const trimmed = newName.trim();
+    if (!trimmed) throw new Error('Họ tên không được để trống.');
+
+    const updates: Record<string, any> = {
+      name: trimmed,
+      avatar: newAvatarUrl || user.avatar,
+    };
+
+    // 1. Cập nhật Firebase Realtime Database
+    await update(ref(db, `users/${user.id}`), updates);
+
+    // 2. Cập nhật Firebase Auth
+    if (auth.currentUser) {
+      await updateProfile(auth.currentUser, {
+        displayName: trimmed,
+        photoURL: newAvatarUrl || user.avatar,
+      });
+    }
+
+    // 3. Cập nhật state local
+    setUser(prev => ({
+      ...prev,
+      name: trimmed,
+      avatar: newAvatarUrl || prev.avatar,
+    }));
   };
 
   const markConversationAsRead = (convIdOrOtherUserId: string) => {
     if (!user.id || !convIdOrOtherUserId) return;
-    const convId = convIdOrOtherUserId.includes('_')
-      ? convIdOrOtherUserId
-      : getChatId(user.id, convIdOrOtherUserId);
+    // Nếu là nhóm (bắt đầu bằng '-') hoặc đã là 1-1 compound ID (chứa '_'), giữ nguyên ID cuộc trò chuyện
+    const convId =
+      convIdOrOtherUserId.startsWith('-') || convIdOrOtherUserId.includes('_')
+        ? convIdOrOtherUserId
+        : getChatId(user.id, convIdOrOtherUserId);
     markChatAsRead(user.id, convId);
   };
 
@@ -241,6 +279,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         markNotificationAsRead,
         markAllNotificationsAsRead,
         updateSetting,
+        updateUserProfile,
       }}>
       {children}
     </AppContext.Provider>

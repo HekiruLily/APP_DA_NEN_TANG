@@ -66,10 +66,10 @@ export const NotificationsScreen: React.FC = () => {
     // 2. Mở đúng cuộc trò chuyện
     if (item.convId) {
       const targetConv = conversations.find(c => c.id === item.convId);
-      const isGroup = targetConv?.type === 'group';
+      const isGroup = targetConv?.type === 'group' || item.convId.startsWith('-') || item.type === 'group_added';
 
       let targetUser: User | undefined = targetConv?.user;
-      if (!targetUser) {
+      if (!isGroup && !targetUser) {
         const foundContact = contacts.find(c => c.id === item.fromUid);
         targetUser = foundContact || {
           id: item.fromUid || 'unknown_user',
@@ -84,8 +84,10 @@ export const NotificationsScreen: React.FC = () => {
       navigation.navigate('ChatDetail', {
         conversationId: item.convId,
         convType: isGroup ? 'group' : 'direct',
-        name: isGroup ? (targetConv?.name || 'Nhóm trò chuyện') : (targetUser?.name || 'Người dùng'),
-        user: targetUser,
+        name: isGroup
+          ? (targetConv?.name || item.groupName || 'Nhóm trò chuyện')
+          : (targetUser?.name || 'Người dùng'),
+        user: isGroup ? undefined : targetUser,
       });
     }
   };
@@ -101,7 +103,7 @@ export const NotificationsScreen: React.FC = () => {
         ]}
         onPress={() => handlePressNotification(item)}
         activeOpacity={0.7}>
-        {/* ICON LOẠI THÔNG BÁO */}
+        {}
         <View
           style={[
             styles.iconContainer,
@@ -110,7 +112,7 @@ export const NotificationsScreen: React.FC = () => {
           <Text style={styles.notifEmoji}>{getNotificationIcon(item.type)}</Text>
         </View>
 
-        {/* NỘI DUNG THÔNG BÁO */}
+        {}
         <View style={styles.contentContainer}>
           <View style={styles.titleRow}>
             <Text
@@ -152,7 +154,7 @@ export const NotificationsScreen: React.FC = () => {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.container}>
-        {/* HEADER */}
+        {}
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>Thông báo</Text>
@@ -163,7 +165,7 @@ export const NotificationsScreen: React.FC = () => {
             </Text>
           </View>
 
-          {/* NÚT ĐÁNH DẤU TẤT CẢ ĐÃ ĐỌC */}
+          {}
           {notifications.length > 0 && (
             <TouchableOpacity
               style={styles.markAllButton}
@@ -174,7 +176,7 @@ export const NotificationsScreen: React.FC = () => {
           )}
         </View>
 
-        {/* DANH SÁCH THÔNG BÁO THẬT TỪ FIREBASE */}
+        {}
         <FlatList
           data={notifications}
           keyExtractor={item => item.id}

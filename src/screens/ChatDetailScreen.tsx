@@ -6,6 +6,7 @@ import {
   Image,
   TouchableOpacity,
   FlatList,
+  ScrollView,
   StyleSheet,
   StatusBar,
   SafeAreaView,
@@ -27,11 +28,12 @@ import {
   CameraOptions,
   Asset,
 } from 'react-native-image-picker';
-import { RootStackParamList, Message, User } from '../types';
+import { RootStackParamList, Message, User, QuotedMessage } from '../types';
 import { useApp } from '../context/AppContext';
 import { colors } from '../theme/colors';
 import {
   getChatId,
+  ensureConversation,
   listenUserStatus,
   setTypingStatus,
   listenTyping,
@@ -44,7 +46,14 @@ import {
   formatLastSeen,
   formatMessageTime,
 } from '../services/chatService';
-import { listenGroupOnlineMembers } from '../services/groupService';
+import {
+  listenGroupOnlineMembers,
+  renameGroup,
+  addMembersToGroup,
+  removeMemberFromGroup,
+  leaveGroup,
+  disbandGroup,
+} from '../services/groupService';
 import { setActiveChat } from '../services/notificationService';
 import { uploadImageToCloudinary } from '../services/uploadService';
 import { requestLocationPermission, getCurrentLocation } from '../services/locationService';
@@ -72,38 +81,74 @@ export const ChatDetailScreen: React.FC = () => {
   const { conversationId, user: initialUser, convType, name: initialName } = route.params;
   const { user: currentUser, contacts, sendMessage } = useApp();
 
-  const isGroup = convType === 'group' || (conversationId && !conversationId.includes('_'));
+  // Xác định chuẩn xác chat nhóm hay chat 1-1:
+  const isGroup = convType === 'group' || (convType !== 'direct' && !!conversationId && conversationId.startsWith('-'));
+
+  // Lấy UID đối phương trong chat 1-1
+  const otherUserId = useMemo(() => {
+    if (isGroup) return '';
+    if (initialUser?.id) return initialUser.id;
+    if (conversationId) {
+      if (conversationId.includes('_')) {
+        const parts = conversationId.split('_');
+        return parts[0] === currentUser.id ? parts[1] : parts[0];
+      }
+      return conversationId;
+    }
+    return '';
+  }, [isGroup, initialUser?.id, conversationId, currentUser.id]);
 
   const convId = useMemo(() => {
-    if (conversationId) return conversationId;
-    if (currentUser.id && initialUser?.id) return getChatId(currentUser.id, initialUser.id);
-    return '';
-  }, [conversationId, currentUser.id, initialUser?.id]);
+    if (isGroup) return conversationId || '';
+    if (currentUser.id && otherUserId) return getChatId(currentUser.id, otherUserId);
+    return conversationId || '';
+  }, [isGroup, conversationId, currentUser.id, otherUserId]);
 
   const [inputText, setInputText] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSendingLocation, setIsSendingLocation] = useState(false);
-  const [otherUser, setOtherUser] = useState<User>(
-    initialUser || {
-      id: '',
-      name: initialName || (isGroup ? 'Nhóm trò chuyện' : 'Người dùng'),
-      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-        initialName || 'Group'
-      )}&background=6366F1&color=fff&size=128`,
-      isOnline: false,
-    }
-  );
+  const [otherUser, setOtherUser] = useState<User>(() => {
+    if (initialUser && !isGroup) return initialUser;
+    const foundContact = !isGroup && otherUserId ? contacts.find(c => c.id === otherUserId) : null;
+    if (foundContact) return foundContact;
 
-  // Thông tin nhóm (tổng thành viên, thành viên online)
+    const displayName = initialName || (isGroup ? 'Nhóm trò chuyện' : 'Người dùng');
+    return {
+      id: otherUserId || (isGroup ? conversationId || '' : ''),
+      name: displayName,
+      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        displayName
+      )}&background=${isGroup ? '6366F1' : '4F46E5'}&color=fff&size=128`,
+      isOnline: false,
+    };
+  });
+
+  // Thông tin nhóm (tổng thành viên, thành viên online, trưởng nhóm, danh sách UID)
   const [groupInfo, setGroupInfo] = useState<{
     totalCount: number;
     onlineCount: number;
     name: string;
+    createdBy?: string;
+    membersMap?: Record<string, boolean>;
   }>({
     totalCount: 0,
     onlineCount: 0,
     name: initialName || 'Nhóm trò chuyện',
+    createdBy: '',
+    membersMap: {},
   });
+
+  // Trả lời tin nhắn (Reply / Quote)
+  const [replyingTo, setReplyingTo] = useState<Message | null>(null);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<string | null>(null);
+
+  // Quản trị nhóm
+  const [groupModalVisible, setGroupModalVisible] = useState(false);
+  const [renameModalVisible, setRenameModalVisible] = useState(false);
+  const [newGroupNameInput, setNewGroupNameInput] = useState('');
+  const [addMembersModalVisible, setAddMembersModalVisible] = useState(false);
+  const [selectedAddMemberIds, setSelectedAddMemberIds] = useState<string[]>([]);
+  const [isGroupActionLoading, setIsGroupActionLoading] = useState(false);
 
   // Danh sách ảnh đang tải lên (hiển thị tạm)
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
@@ -139,6 +184,12 @@ export const ChatDetailScreen: React.FC = () => {
       setActiveChat(currentUser.id, null);
     };
   }, [convId, currentUser.id]);
+
+  // Đảm bảo conversation 1-1 tồn tại trong database khi mở màn hình
+  useEffect(() => {
+    if (!convId || !currentUser.id || isGroup) return;
+    ensureConversation(convId, currentUser.id, otherUserId, otherUser);
+  }, [convId, currentUser.id, isGroup, otherUserId, otherUser]);
 
   // Cập nhật read status khi mở màn hình và khi có tin nhắn mới
   useEffect(() => {
@@ -176,6 +227,8 @@ export const ChatDetailScreen: React.FC = () => {
           totalCount: info.totalCount,
           onlineCount: info.onlineCount,
           name: info.name,
+          createdBy: info.createdBy,
+          membersMap: info.membersMap,
         });
       });
     } else if (initialUser?.id) {
@@ -257,6 +310,24 @@ export const ChatDetailScreen: React.FC = () => {
     setTypingStatus(convId, currentUser.id, false);
     setInputText('');
 
+    const currentReply = replyingTo;
+    const quoted: QuotedMessage | undefined = currentReply
+      ? {
+          id: currentReply.id,
+          senderId: currentReply.senderId,
+          senderName: currentReply.senderName || 'Người dùng',
+          text:
+            currentReply.type === 'image'
+              ? '📷 Hình ảnh'
+              : currentReply.type === 'location'
+              ? '📍 Vị trí'
+              : currentReply.text,
+          type: currentReply.type || 'text',
+        }
+      : undefined;
+
+    setReplyingTo(null);
+
     try {
       await sendMessage(
         convId,
@@ -264,7 +335,8 @@ export const ChatDetailScreen: React.FC = () => {
         'text',
         undefined,
         undefined,
-        isGroup ? undefined : otherUser
+        isGroup ? undefined : otherUser,
+        quoted
       );
     } catch (err) {
       console.warn('Send message error:', err);
@@ -513,7 +585,7 @@ export const ChatDetailScreen: React.FC = () => {
 
   // Mở menu tương tác khi nhấn giữ tin nhắn
   const handleLongPressMessage = (msg: Message) => {
-    if (msg.senderId === 'system') return; // Không menu cho tin hệ thống
+    if (msg.senderId === 'system' || msg.type === 'system') return; // Không menu cho tin hệ thống
     setSelectedMessage(msg);
     setMenuVisible(true);
   };
@@ -620,6 +692,198 @@ export const ChatDetailScreen: React.FC = () => {
     });
   };
 
+  // Chọn trả lời một tin nhắn cụ thể
+  const handleReplyMessage = () => {
+    if (!selectedMessage) return;
+    setReplyingTo(selectedMessage);
+    setMenuVisible(false);
+  };
+
+  // Cuộn tới tin nhắn gốc khi nhấn vào trích dẫn
+  const handleScrollToMessage = (targetMsgId: string) => {
+    const targetIndex = messages.findIndex(m => m.id === targetMsgId);
+    if (targetIndex !== -1) {
+      flatListRef.current?.scrollToIndex({
+        index: targetIndex,
+        animated: true,
+        viewPosition: 0.5,
+      });
+      setHighlightedMsgId(targetMsgId);
+      setTimeout(() => {
+        setHighlightedMsgId(null);
+      }, 2000);
+    } else {
+      Alert.alert(
+        'Không tìm thấy tin gốc',
+        'Tin nhắn gốc không nằm trong các tin nhắn gần đây hoặc đã bị thu hồi/xóa.'
+      );
+    }
+  };
+
+  // QUẢN TRỊ NHÓM: Đổi tên nhóm
+  const handleOpenRenameModal = () => {
+    setNewGroupNameInput(groupInfo.name || '');
+    setRenameModalVisible(true);
+  };
+
+  const handleConfirmRenameGroup = async () => {
+    const trimmed = newGroupNameInput.trim();
+    if (!trimmed) {
+      Alert.alert('Chưa nhập tên', 'Vui lòng nhập tên mới cho nhóm.');
+      return;
+    }
+    setIsGroupActionLoading(true);
+    try {
+      await renameGroup({
+        convId,
+        newName: trimmed,
+        currentUid: currentUser.id,
+        currentUserName: currentUser.name || 'Người dùng',
+      });
+      setGroupInfo(prev => ({ ...prev, name: trimmed }));
+      setRenameModalVisible(false);
+      Alert.alert('Thành công', `Đã đổi tên nhóm thành "${trimmed}".`);
+    } catch (err: any) {
+      console.warn('Rename group error:', err);
+      Alert.alert('Lỗi', err.message || 'Không thể đổi tên nhóm.');
+    } finally {
+      setIsGroupActionLoading(false);
+    }
+  };
+
+  // QUẢN TRỊ NHÓM: Mở modal thêm thành viên
+  const handleOpenAddMembersModal = () => {
+    setSelectedAddMemberIds([]);
+    setAddMembersModalVisible(true);
+  };
+
+  const handleToggleSelectAddMember = (uid: string) => {
+    setSelectedAddMemberIds(prev =>
+      prev.includes(uid) ? prev.filter(id => id !== uid) : [...prev, uid]
+    );
+  };
+
+  const handleConfirmAddMembers = async () => {
+    if (selectedAddMemberIds.length === 0) {
+      Alert.alert('Thông báo', 'Vui lòng chọn ít nhất 1 bạn bè để thêm vào nhóm.');
+      return;
+    }
+    const membersToAdd = contacts.filter(c => selectedAddMemberIds.includes(c.id));
+    setIsGroupActionLoading(true);
+    try {
+      await addMembersToGroup({
+        convId,
+        newMembers: membersToAdd,
+        currentUid: currentUser.id,
+        currentUserName: currentUser.name || 'Người dùng',
+      });
+      setAddMembersModalVisible(false);
+      Alert.alert('Thành công', `Đã thêm ${membersToAdd.length} thành viên vào nhóm.`);
+    } catch (err: any) {
+      console.warn('Add members error:', err);
+      Alert.alert('Lỗi', err.message || 'Không thể thêm thành viên.');
+    } finally {
+      setIsGroupActionLoading(false);
+    }
+  };
+
+  // QUẢN TRỊ NHÓM: Xóa thành viên
+  const handleRemoveMember = (member: User) => {
+    Alert.alert(
+      'Xóa thành viên',
+      `Bạn có chắc chắn muốn xóa "${member.name}" khỏi nhóm trò chuyện?`,
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Xóa',
+          style: 'destructive',
+          onPress: async () => {
+            setIsGroupActionLoading(true);
+            try {
+              await removeMemberFromGroup({
+                convId,
+                memberId: member.id,
+                memberName: member.name,
+                currentUid: currentUser.id,
+                currentUserName: currentUser.name || 'Người dùng',
+              });
+              Alert.alert('Thành công', `Đã xóa "${member.name}" khỏi nhóm.`);
+            } catch (err: any) {
+              console.warn('Remove member error:', err);
+              Alert.alert('Lỗi', err.message || 'Không thể xóa thành viên.');
+            } finally {
+              setIsGroupActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // THÀNH VIÊN / TRƯỞNG NHÓM: Rời nhóm
+  const handleLeaveGroup = () => {
+    const isCreator = groupInfo.createdBy === currentUser.id;
+    const confirmMsg = isCreator
+      ? 'Bạn đang là trưởng nhóm. Nếu rời nhóm, quyền trưởng nhóm sẽ được tự động chuyển giao cho thành viên khác. Bạn có chắc chắn muốn rời?'
+      : 'Bạn có chắc chắn muốn rời khỏi nhóm trò chuyện này?';
+
+    Alert.alert('Rời nhóm', confirmMsg, [
+      { text: 'Hủy', style: 'cancel' },
+      {
+        text: 'Rời nhóm',
+        style: 'destructive',
+        onPress: async () => {
+          setIsGroupActionLoading(true);
+          try {
+            await leaveGroup({
+              convId,
+              currentUid: currentUser.id,
+              currentUserName: currentUser.name || 'Người dùng',
+            });
+            setGroupModalVisible(false);
+            navigation.goBack();
+          } catch (err: any) {
+            console.warn('Leave group error:', err);
+            Alert.alert('Lỗi', err.message || 'Không thể rời nhóm.');
+          } finally {
+            setIsGroupActionLoading(false);
+          }
+        },
+      },
+    ]);
+  };
+
+  // QUẢN TRỊ NHÓM: Giải tán nhóm
+  const handleDisbandGroup = () => {
+    Alert.alert(
+      'Giải tán nhóm',
+      'Bạn có chắc chắn muốn giải tán nhóm này? Toàn bộ cuộc trò chuyện sẽ bị xóa đối với tất cả thành viên.',
+      [
+        { text: 'Hủy', style: 'cancel' },
+        {
+          text: 'Giải tán',
+          style: 'destructive',
+          onPress: async () => {
+            setIsGroupActionLoading(true);
+            try {
+              await disbandGroup({
+                convId,
+                currentUid: currentUser.id,
+              });
+              setGroupModalVisible(false);
+              navigation.goBack();
+            } catch (err: any) {
+              console.warn('Disband group error:', err);
+              Alert.alert('Lỗi', err.message || 'Không thể giải tán nhóm.');
+            } finally {
+              setIsGroupActionLoading(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
   // Tìm tin nhắn cuối cùng do currentUser gửi (chỉ áp dụng cho 1-1 để hiện Đã gửi/Đã xem)
   const lastMyMessage = useMemo(() => {
     if (isGroup || pendingUploads.length > 0) return null;
@@ -657,7 +921,7 @@ export const ChatDetailScreen: React.FC = () => {
   // Render từng item tin nhắn
   const renderMessageItem = ({ item }: { item: Message }) => {
     // 1. Tin nhắn hệ thống (ví dụ: tạo nhóm)
-    if (item.senderId === 'system') {
+    if (item.senderId === 'system' || item.type === 'system') {
       return (
         <View style={styles.systemMessageContainer}>
           <Text style={styles.systemMessageText}>{item.text}</Text>
@@ -688,7 +952,11 @@ export const ChatDetailScreen: React.FC = () => {
       )}&background=4F46E5&color=fff&size=128`;
 
     return (
-      <View style={styles.messageItemWrapper}>
+      <View
+        style={[
+          styles.messageItemWrapper,
+          highlightedMsgId === item.id && styles.highlightedMessageItem,
+        ]}>
         <View
           style={[
             styles.messageRow,
@@ -708,7 +976,43 @@ export const ChatDetailScreen: React.FC = () => {
               isImage && !isRecalled && styles.bubbleImageContainer,
               isRecalled && styles.bubbleRecalled,
             ]}>
-            {/* TRONG NHÓM: Tin của người khác hiển thị tên người gửi phía trên bong bóng */}
+            {/* TRÍCH DẪN TIN NHẮN (REPLY / QUOTE) */}
+            {item.replyTo && !isRecalled && (
+              <TouchableOpacity
+                style={[
+                  styles.quotedContainer,
+                  item.isMe ? styles.quotedContainerMe : styles.quotedContainerOther,
+                ]}
+                onPress={() => handleScrollToMessage(item.replyTo!.id)}
+                activeOpacity={0.7}>
+                <View
+                  style={[
+                    styles.quotedBar,
+                    item.isMe ? styles.quotedBarMe : styles.quotedBarOther,
+                  ]}
+                />
+                <View style={styles.quotedContent}>
+                  <Text
+                    style={[
+                      styles.quotedSender,
+                      item.isMe ? styles.quotedSenderMe : styles.quotedSenderOther,
+                    ]}
+                    numberOfLines={1}>
+                    {item.replyTo.senderName}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.quotedText,
+                      item.isMe ? styles.quotedTextMe : styles.quotedTextOther,
+                    ]}
+                    numberOfLines={2}>
+                    {item.replyTo.text}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {}
             {isGroup && !item.isMe && !isRecalled && (
               <Text style={styles.senderNameText} numberOfLines={1}>
                 {item.senderName || senderContact?.name || 'Thành viên'}
@@ -900,7 +1204,7 @@ export const ChatDetailScreen: React.FC = () => {
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-        {/* HEADER */}
+        {}
         <View style={styles.header}>
           <TouchableOpacity
             style={styles.backButton}
@@ -911,7 +1215,16 @@ export const ChatDetailScreen: React.FC = () => {
 
           <View style={styles.headerUserInfo}>
             <View style={styles.avatarWrapper}>
-              <Image source={{ uri: otherUser.avatar }} style={styles.headerAvatar} />
+              <Image
+                source={{
+                  uri: isGroup
+                    ? `https://ui-avatars.com/api/?name=${encodeURIComponent(
+                        headerTitle
+                      )}&background=6366F1&color=fff&size=128`
+                    : otherUser.avatar,
+                }}
+                style={styles.headerAvatar}
+              />
               {!isGroup && otherUser.isOnline && <View style={styles.headerOnlineDot} />}
               {isGroup && (
                 <View style={styles.groupHeaderBadge}>
@@ -933,9 +1246,18 @@ export const ChatDetailScreen: React.FC = () => {
               </Text>
             </View>
           </View>
+
+          {isGroup && (
+            <TouchableOpacity
+              style={styles.headerRightBtn}
+              onPress={() => setGroupModalVisible(true)}
+              activeOpacity={0.7}>
+              <Text style={styles.headerRightBtnText}>⚙️</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* DANH SÁCH TIN NHẮN */}
+        {}
         <FlatList
           ref={flatListRef}
           data={messages}
@@ -943,6 +1265,12 @@ export const ChatDetailScreen: React.FC = () => {
           renderItem={renderMessageItem}
           contentContainerStyle={styles.messageList}
           showsVerticalScrollIndicator={false}
+          onScrollToIndexFailed={info => {
+            flatListRef.current?.scrollToOffset({
+              offset: info.averageItemLength * info.index,
+              animated: true,
+            });
+          }}
           ListHeaderComponent={
             hasMoreOlder && messages.length >= 20 ? (
               <TouchableOpacity
@@ -984,7 +1312,7 @@ export const ChatDetailScreen: React.FC = () => {
           }
         />
 
-        {/* THANH ĐANG SOẠN TIN NHỎ TRÊN INPUT */}
+        {}
         {typingUids.length > 0 && (
           <View style={styles.typingIndicatorRow}>
             <Text style={styles.typingIndicatorText}>
@@ -993,7 +1321,32 @@ export const ChatDetailScreen: React.FC = () => {
           </View>
         )}
 
-        {/* INPUT SOẠN TIN */}
+        {}
+        {/* THANH XEM TRƯỚC TRẢ LỜI TIN NHẮN */}
+        {replyingTo && (
+          <View style={styles.replyPreviewBar}>
+            <View style={styles.replyPreviewIndicator} />
+            <View style={styles.replyPreviewContent}>
+              <Text style={styles.replyPreviewSender} numberOfLines={1}>
+                ↩️ Đang trả lời {replyingTo.isMe ? 'chính bạn' : replyingTo.senderName || 'Người dùng'}
+              </Text>
+              <Text style={styles.replyPreviewText} numberOfLines={1}>
+                {replyingTo.type === 'image'
+                  ? '📷 Hình ảnh'
+                  : replyingTo.type === 'location'
+                  ? '📍 Vị trí'
+                  : replyingTo.text}
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.replyPreviewCloseBtn}
+              onPress={() => setReplyingTo(null)}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <Text style={styles.replyPreviewCloseText}>✕</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.inputContainer}>
           <TouchableOpacity
             style={styles.mediaButton}
@@ -1041,7 +1394,7 @@ export const ChatDetailScreen: React.FC = () => {
           </TouchableOpacity>
         </View>
 
-        {/* MODAL CHỌN NGUỒN ẢNH */}
+        {}
         <Modal
           visible={imageModalVisible}
           transparent
@@ -1076,7 +1429,7 @@ export const ChatDetailScreen: React.FC = () => {
           </Pressable>
         </Modal>
 
-        {/* MODAL XEM ẢNH TOÀN MÀN HÌNH */}
+        {}
         <Modal
           visible={!!viewingImageUrl}
           transparent
@@ -1103,7 +1456,7 @@ export const ChatDetailScreen: React.FC = () => {
           </SafeAreaView>
         </Modal>
 
-        {/* MODAL MENU KHI NHẤN GIỮ TIN NHẮN */}
+        {}
         <Modal
           visible={menuVisible}
           transparent
@@ -1129,6 +1482,15 @@ export const ChatDetailScreen: React.FC = () => {
               </View>
 
               <View style={styles.menuDivider} />
+
+              {!selectedMessage?.recalled && (
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={handleReplyMessage}>
+                  <Text style={styles.menuItemIcon}>💬</Text>
+                  <Text style={styles.menuItemText}>Trả lời tin nhắn</Text>
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={styles.menuItem}
@@ -1159,6 +1521,295 @@ export const ChatDetailScreen: React.FC = () => {
               </TouchableOpacity>
             </Pressable>
           </Pressable>
+        </Modal>
+
+        {/* MODAL THÔNG TIN & QUẢN TRỊ NHÓM */}
+        <Modal
+          visible={groupModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setGroupModalVisible(false)}>
+          <SafeAreaView style={styles.groupModalSafeArea}>
+            <View style={styles.groupModalContainer}>
+              {/* Header Modal */}
+              <View style={styles.groupModalHeader}>
+                <TouchableOpacity
+                  style={styles.groupModalCloseBtn}
+                  onPress={() => setGroupModalVisible(false)}>
+                  <Text style={styles.groupModalCloseIcon}>✕</Text>
+                </TouchableOpacity>
+                <Text style={styles.groupModalTitle}>Thông tin nhóm</Text>
+                <View style={{ width: 36 }} />
+              </View>
+
+              <ScrollView
+                style={styles.groupModalScroll}
+                contentContainerStyle={styles.groupModalScrollContent}
+                showsVerticalScrollIndicator={false}>
+                {/* Thẻ đại diện nhóm */}
+                <View style={styles.groupCard}>
+                  <View style={styles.groupAvatarCircle}>
+                    <Text style={styles.groupAvatarIconLarge}>👥</Text>
+                  </View>
+                  <Text style={styles.groupCardName}>{groupInfo.name}</Text>
+                  <Text style={styles.groupCardStats}>
+                    {groupInfo.totalCount} thành viên · {groupInfo.onlineCount} trực tuyến
+                  </Text>
+                  {groupInfo.createdBy === currentUser.id ? (
+                    <View style={styles.adminBadge}>
+                      <Text style={styles.adminBadgeText}>👑 Bạn là Trưởng nhóm</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.groupCreatorText}>
+                      Trưởng nhóm: {contacts.find(c => c.id === groupInfo.createdBy)?.name || 'Chủ phòng'}
+                    </Text>
+                  )}
+                </View>
+
+                {/* Các nút hành động quản lý nhóm */}
+                <View style={styles.groupActionsCard}>
+                  {groupInfo.createdBy === currentUser.id && (
+                    <>
+                      <TouchableOpacity
+                        style={styles.groupActionRow}
+                        onPress={handleOpenRenameModal}>
+                        <View style={[styles.groupActionIconCircle, { backgroundColor: '#EEF2FF' }]}>
+                          <Text style={styles.groupActionEmoji}>✏️</Text>
+                        </View>
+                        <Text style={styles.groupActionLabel}>Đổi tên nhóm</Text>
+                        <Text style={styles.groupActionChevron}>›</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.groupActionRow}
+                        onPress={handleOpenAddMembersModal}>
+                        <View style={[styles.groupActionIconCircle, { backgroundColor: '#F0FDF4' }]}>
+                          <Text style={styles.groupActionEmoji}>➕</Text>
+                        </View>
+                        <Text style={styles.groupActionLabel}>Thêm thành viên</Text>
+                        <Text style={styles.groupActionChevron}>›</Text>
+                      </TouchableOpacity>
+                    </>
+                  )}
+
+                  <TouchableOpacity
+                    style={styles.groupActionRow}
+                    onPress={handleLeaveGroup}>
+                    <View style={[styles.groupActionIconCircle, { backgroundColor: '#FEF2F2' }]}>
+                      <Text style={styles.groupActionEmoji}>🚪</Text>
+                    </View>
+                    <Text style={[styles.groupActionLabel, { color: colors.danger }]}>
+                      Rời nhóm
+                    </Text>
+                    <Text style={styles.groupActionChevron}>›</Text>
+                  </TouchableOpacity>
+
+                  {groupInfo.createdBy === currentUser.id && (
+                    <TouchableOpacity
+                      style={[styles.groupActionRow, { borderBottomWidth: 0 }]}
+                      onPress={handleDisbandGroup}>
+                      <View style={[styles.groupActionIconCircle, { backgroundColor: '#FEF2F2' }]}>
+                        <Text style={styles.groupActionEmoji}>🗑️</Text>
+                      </View>
+                      <Text style={[styles.groupActionLabel, { color: colors.danger }]}>
+                        Giải tán nhóm
+                      </Text>
+                      <Text style={styles.groupActionChevron}>›</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {/* Danh sách thành viên */}
+                <View style={styles.groupMembersSection}>
+                  <Text style={styles.groupMembersSectionTitle}>
+                    THÀNH VIÊN ({groupInfo.totalCount})
+                  </Text>
+
+                  {Object.keys(groupInfo.membersMap || {}).map(uid => {
+                    const isSelf = uid === currentUser.id;
+                    const contact = isSelf
+                      ? currentUser
+                      : contacts.find(c => c.id === uid) || {
+                          id: uid,
+                          name: `Thành viên (${uid.slice(0, 5)})`,
+                          avatar: `https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff`,
+                          isOnline: false,
+                        };
+                    const isMemberAdmin = uid === groupInfo.createdBy;
+                    const canKick =
+                      groupInfo.createdBy === currentUser.id && !isSelf;
+
+                    return (
+                      <View key={uid} style={styles.memberItemRow}>
+                        <View style={styles.memberAvatarContainer}>
+                          <Image
+                            source={{ uri: contact.avatar }}
+                            style={styles.memberAvatar}
+                          />
+                          {contact.isOnline && <View style={styles.memberOnlineDot} />}
+                        </View>
+
+                        <View style={styles.memberInfo}>
+                          <View style={styles.memberNameRow}>
+                            <Text style={styles.memberNameText}>
+                              {contact.name} {isSelf ? '(Bạn)' : ''}
+                            </Text>
+                            {isMemberAdmin && (
+                              <View style={styles.memberAdminTag}>
+                                <Text style={styles.memberAdminTagText}>👑 Trưởng nhóm</Text>
+                              </View>
+                            )}
+                          </View>
+                          <Text style={styles.memberStatusText}>
+                            {contact.isOnline ? '🟢 Đang hoạt động' : '⚪ Ngoại tuyến'}
+                          </Text>
+                        </View>
+
+                        {canKick && (
+                          <TouchableOpacity
+                            style={styles.kickMemberBtn}
+                            onPress={() => handleRemoveMember(contact)}
+                            activeOpacity={0.7}>
+                            <Text style={styles.kickMemberBtnText}>Xóa</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+              </ScrollView>
+            </View>
+          </SafeAreaView>
+        </Modal>
+
+        {/* MODAL ĐỔI TÊN NHÓM */}
+        <Modal
+          visible={renameModalVisible}
+          transparent
+          animationType="fade"
+          onRequestClose={() => {
+            if (!isGroupActionLoading) setRenameModalVisible(false);
+          }}>
+          <Pressable
+            style={styles.modalOverlay}
+            onPress={() => {
+              if (!isGroupActionLoading) setRenameModalVisible(false);
+            }}>
+            <Pressable style={styles.renameModalCard} onPress={e => e.stopPropagation()}>
+              <Text style={styles.renameModalTitle}>Đổi tên nhóm</Text>
+              <TextInput
+                style={styles.renameInput}
+                value={newGroupNameInput}
+                onChangeText={setNewGroupNameInput}
+                placeholder="Nhập tên nhóm mới..."
+                placeholderTextColor={colors.textMuted}
+                maxLength={50}
+                autoFocus
+              />
+              <View style={styles.renameBtnRow}>
+                <TouchableOpacity
+                  style={styles.renameCancelBtn}
+                  onPress={() => setRenameModalVisible(false)}
+                  disabled={isGroupActionLoading}>
+                  <Text style={styles.renameCancelBtnText}>Hủy</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.renameSaveBtn,
+                    isGroupActionLoading && styles.btnDisabled,
+                  ]}
+                  onPress={handleConfirmRenameGroup}
+                  disabled={isGroupActionLoading}>
+                  {isGroupActionLoading ? (
+                    <ActivityIndicator size="small" color="#ffffff" />
+                  ) : (
+                    <Text style={styles.renameSaveBtnText}>Lưu</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+
+        {/* MODAL THÊM THÀNH VIÊN VÀO NHÓM */}
+        <Modal
+          visible={addMembersModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => {
+            if (!isGroupActionLoading) setAddMembersModalVisible(false);
+          }}>
+          <SafeAreaView style={styles.groupModalSafeArea}>
+            <View style={styles.groupModalContainer}>
+              <View style={styles.groupModalHeader}>
+                <TouchableOpacity
+                  style={styles.groupModalCloseBtn}
+                  onPress={() => setAddMembersModalVisible(false)}>
+                  <Text style={styles.groupModalCloseIcon}>✕</Text>
+                </TouchableOpacity>
+                <Text style={styles.groupModalTitle}>Thêm thành viên</Text>
+                <TouchableOpacity
+                  style={[
+                    styles.addMembersConfirmHeaderBtn,
+                    selectedAddMemberIds.length === 0 && styles.btnDisabled,
+                  ]}
+                  onPress={handleConfirmAddMembers}
+                  disabled={selectedAddMemberIds.length === 0 || isGroupActionLoading}>
+                  {isGroupActionLoading ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Text style={styles.addMembersConfirmHeaderText}>
+                      Thêm ({selectedAddMemberIds.length})
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+
+              <FlatList
+                data={contacts.filter(c => !groupInfo.membersMap?.[c.id])}
+                keyExtractor={item => item.id}
+                contentContainerStyle={styles.addMembersListContent}
+                ListEmptyComponent={
+                  <View style={styles.emptyAddMembers}>
+                    <Text style={styles.emptyAddMembersEmoji}>👥</Text>
+                    <Text style={styles.emptyAddMembersText}>
+                      Tất cả bạn bè trong danh bạ đã có mặt trong nhóm trò chuyện này!
+                    </Text>
+                  </View>
+                }
+                renderItem={({ item }) => {
+                  const isSelected = selectedAddMemberIds.includes(item.id);
+                  return (
+                    <TouchableOpacity
+                      style={[
+                        styles.addMemberItem,
+                        isSelected && styles.addMemberItemSelected,
+                      ]}
+                      onPress={() => handleToggleSelectAddMember(item.id)}
+                      activeOpacity={0.7}>
+                      <View style={styles.memberAvatarContainer}>
+                        <Image source={{ uri: item.avatar }} style={styles.memberAvatar} />
+                        {item.isOnline && <View style={styles.memberOnlineDot} />}
+                      </View>
+                      <View style={styles.memberInfo}>
+                        <Text style={styles.memberNameText}>{item.name}</Text>
+                        <Text style={styles.memberStatusText}>
+                          {item.isOnline ? '🟢 Trực tuyến' : '⚪ Ngoại tuyến'}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.addMemberCheckbox,
+                          isSelected && styles.addMemberCheckboxSelected,
+                        ]}>
+                        {isSelected && <Text style={styles.addMemberCheckmark}>✓</Text>}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            </View>
+          </SafeAreaView>
         </Modal>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -1796,5 +2447,436 @@ const styles = StyleSheet.create({
   fullScreenImage: {
     width: '100%',
     height: '100%',
+  },
+  headerRightBtn: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#F1F5F9',
+    marginLeft: 8,
+  },
+  headerRightBtnText: {
+    fontSize: 18,
+  },
+  highlightedMessageItem: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 12,
+  },
+  replyPreviewBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderTopWidth: 1,
+    borderTopColor: colors.borderLight,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  replyPreviewIndicator: {
+    width: 3.5,
+    height: 32,
+    backgroundColor: colors.primary,
+    borderRadius: 2,
+    marginRight: 10,
+  },
+  replyPreviewContent: {
+    flex: 1,
+  },
+  replyPreviewSender: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
+    marginBottom: 2,
+  },
+  replyPreviewText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+  },
+  replyPreviewCloseBtn: {
+    padding: 6,
+    borderRadius: 14,
+    backgroundColor: '#E2E8F0',
+    marginLeft: 8,
+  },
+  replyPreviewCloseText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  quotedContainer: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    padding: 6,
+    marginBottom: 6,
+  },
+  quotedContainerMe: {
+    backgroundColor: 'rgba(0, 0, 0, 0.1)',
+  },
+  quotedContainerOther: {
+    backgroundColor: 'rgba(0, 0, 0, 0.05)',
+  },
+  quotedBar: {
+    width: 3,
+    borderRadius: 2,
+    marginRight: 8,
+  },
+  quotedBarMe: {
+    backgroundColor: '#ffffff',
+  },
+  quotedBarOther: {
+    backgroundColor: colors.primary,
+  },
+  quotedContent: {
+    flex: 1,
+  },
+  quotedSender: {
+    fontSize: 11,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  quotedSenderMe: {
+    color: '#ffffff',
+  },
+  quotedSenderOther: {
+    color: colors.primary,
+  },
+  quotedText: {
+    fontSize: 12,
+  },
+  quotedTextMe: {
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  quotedTextOther: {
+    color: colors.textSecondary,
+  },
+  groupModalSafeArea: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
+  groupModalContainer: {
+    flex: 1,
+    backgroundColor: '#F8FAFC',
+  },
+  groupModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    backgroundColor: '#ffffff',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  groupModalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#F1F5F9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  groupModalCloseIcon: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  groupModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  groupModalScroll: {
+    flex: 1,
+  },
+  groupModalScrollContent: {
+    paddingBottom: 40,
+  },
+  groupCard: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  groupAvatarCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  groupAvatarIconLarge: {
+    fontSize: 36,
+  },
+  groupCardName: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.textPrimary,
+    marginBottom: 4,
+  },
+  groupCardStats: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 8,
+  },
+  adminBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginTop: 4,
+  },
+  adminBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  groupCreatorText: {
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  groupActionsCard: {
+    backgroundColor: '#ffffff',
+    marginTop: 16,
+    marginHorizontal: 16,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    overflow: 'hidden',
+  },
+  groupActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight,
+  },
+  groupActionIconCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  groupActionEmoji: {
+    fontSize: 16,
+  },
+  groupActionLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  groupActionChevron: {
+    fontSize: 20,
+    color: colors.textMuted,
+  },
+  groupMembersSection: {
+    marginTop: 20,
+    marginHorizontal: 16,
+  },
+  groupMembersSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.textMuted,
+    marginBottom: 10,
+    marginLeft: 4,
+    letterSpacing: 0.8,
+  },
+  memberItemRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  memberAvatarContainer: {
+    position: 'relative',
+    marginRight: 12,
+  },
+  memberAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.border,
+  },
+  memberOnlineDot: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#22C55E',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  memberInfo: {
+    flex: 1,
+  },
+  memberNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  memberNameText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  memberAdminTag: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  memberAdminTagText: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#D97706',
+  },
+  memberStatusText: {
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  kickMemberBtn: {
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  kickMemberBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.danger,
+  },
+  renameModalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 22,
+    elevation: 8,
+  },
+  renameModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.textPrimary,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  renameInput: {
+    backgroundColor: colors.surfaceAlt,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.textPrimary,
+    marginBottom: 18,
+  },
+  renameBtnRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  renameCancelBtn: {
+    flex: 1,
+    backgroundColor: colors.surfaceAlt,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  renameCancelBtnText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  renameSaveBtn: {
+    flex: 1,
+    backgroundColor: colors.primary,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  renameSaveBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  addMembersConfirmHeaderBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 14,
+  },
+  addMembersConfirmHeaderText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  addMembersListContent: {
+    padding: 16,
+  },
+  emptyAddMembers: {
+    alignItems: 'center',
+    paddingVertical: 40,
+    paddingHorizontal: 20,
+  },
+  emptyAddMembersEmoji: {
+    fontSize: 40,
+    marginBottom: 12,
+  },
+  emptyAddMembersText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  addMemberItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    padding: 12,
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  addMemberItemSelected: {
+    borderColor: colors.primary,
+    backgroundColor: '#EEF2FF',
+  },
+  addMemberCheckbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#CBD5E1',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addMemberCheckboxSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  addMemberCheckmark: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  btnDisabled: {
+    opacity: 0.5,
   },
 });

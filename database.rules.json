@@ -9,25 +9,26 @@
 
     "conversations": {
       "$convId": {
-        ".read": "auth != null && data.child('members/' + auth.uid).val() === true",
+        ".read": "auth != null && (data.child('members/' + auth.uid).val() === true || (!data.exists() && $convId.contains(auth.uid)))",
         ".write": "auth != null && (
-          (!data.exists() && newData.child('members/' + auth.uid).val() === true) ||
-          (data.exists() && data.child('members/' + auth.uid).val() === true)
+          (!data.exists() && (newData.child('members/' + auth.uid).val() === true || $convId.contains(auth.uid))) ||
+          (data.exists() && (data.child('members/' + auth.uid).val() === true || data.child('createdBy').val() === auth.uid))
         )"
       }
     },
 
     "messages": {
       "$convId": {
-        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        ".read": "auth != null && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || (!root.child('conversations/' + $convId).exists() && $convId.contains(auth.uid)))",
+        ".write": "auth != null && (!newData.exists() && root.child('conversations/' + $convId + '/createdBy').val() === auth.uid)",
         "$msgId": {
-          ".write": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true && (
-            (!data.exists() && newData.child('senderId').val() === auth.uid) ||
+          ".write": "auth != null && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || root.child('conversations/' + $convId + '/createdBy').val() === auth.uid || $convId.contains(auth.uid)) && (
+            (!data.exists() && (newData.child('senderId').val() === auth.uid || newData.child('senderId').val() === 'system')) ||
             (data.exists() && data.child('senderId').val() === auth.uid && newData.child('recalled').val() === true)
           )",
           "reactions": {
             "$uid": {
-              ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+              ".write": "auth != null && auth.uid === $uid && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || $convId.contains(auth.uid))"
             }
           }
         }
@@ -36,18 +37,18 @@
 
     "typing": {
       "$convId": {
-        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        ".read": "auth != null && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || (!root.child('conversations/' + $convId).exists() && $convId.contains(auth.uid)))",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+          ".write": "auth != null && auth.uid === $uid && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || root.child('conversations/' + $convId + '/createdBy').val() === auth.uid || $convId.contains(auth.uid))"
         }
       }
     },
 
     "readStatus": {
       "$convId": {
-        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        ".read": "auth != null && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || (!root.child('conversations/' + $convId).exists() && $convId.contains(auth.uid)))",
         "$uid": {
-          ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+          ".write": "auth != null && auth.uid === $uid && (root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true || root.child('conversations/' + $convId + '/createdBy').val() === auth.uid || $convId.contains(auth.uid))"
         }
       }
     },
@@ -58,7 +59,9 @@
         "$convId": {
           ".write": "auth != null && (
             auth.uid === $uid ||
-            root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true
+            root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true ||
+            root.child('conversations/' + $convId + '/createdBy').val() === auth.uid ||
+            $convId.contains(auth.uid)
           )"
         }
       }
