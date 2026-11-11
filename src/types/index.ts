@@ -7,38 +7,58 @@ export interface User {
   phone?: string;
   email?: string;
   bio?: string;
+  lastSeen?: number;
 }
 
 export interface Message {
   id: string;
   senderId: string;
+  senderName?: string;
   text: string;
   timestamp: string;
+  createdAt?: number;
   isMe: boolean;
-  type?: 'text' | 'location';
+  type?: 'text' | 'image' | 'location';
+  imageUrl?: string;
+  lat?: number;
+  lng?: number;
   location?: {
     latitude: number;
     longitude: number;
   };
+  recalled?: boolean;
+  reactions?: { [uid: string]: string };
 }
 
 export interface Conversation {
   id: string;
-  user: User;
+  type?: 'direct' | 'group';
+  name?: string;
+  members?: { [uid: string]: boolean };
+  user?: User;
   lastMessage: string;
   lastMessageTime: string;
+  lastSenderId?: string;
   unreadCount: number;
   messages: Message[];
   updatedAt?: number;
+  createdBy?: string;
+  createdAt?: number;
 }
 
 export interface AppNotification {
   id: string;
-  title: string;
-  content: string;
-  timestamp: string;
-  isRead: boolean;
-  type?: 'message' | 'system' | 'friend';
+  convId?: string;
+  fromUid?: string;
+  fromName?: string;
+  text?: string;
+  title?: string;
+  content?: string;
+  createdAt?: number;
+  read?: boolean;
+  isRead?: boolean;
+  type?: 'new_message' | 'group_added' | 'reaction' | 'message' | 'system' | 'friend' | string;
+  timestamp?: string;
 }
 
 export interface UserSettings {
@@ -52,9 +72,12 @@ export type RootStackParamList = {
   Login: undefined;
   Register: undefined;
   MainTabs: undefined;
+  CreateGroup: undefined;
   ChatDetail: {
     conversationId?: string;
-    user: User;
+    user?: User;
+    convType?: 'direct' | 'group';
+    name?: string;
   };
 };
 

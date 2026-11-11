@@ -8,13 +8,20 @@ import {
   StatusBar,
   SafeAreaView,
 } from 'react-native';
-import { AppNotification } from '../types';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { RootStackParamList, AppNotification, User } from '../types';
 import { useApp } from '../context/AppContext';
 import { colors } from '../theme/colors';
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 export const NotificationsScreen: React.FC = () => {
+  const navigation = useNavigation<NavigationProp>();
   const {
     notifications,
+    conversations,
+    contacts,
     unreadNotificationsCount,
     markNotificationAsRead,
     markAllNotificationsAsRead,
@@ -22,55 +29,108 @@ export const NotificationsScreen: React.FC = () => {
 
   const getNotificationIcon = (type?: string) => {
     switch (type) {
+      case 'new_message':
       case 'message':
         return '💬';
+      case 'group_added':
       case 'friend':
         return '👥';
+      case 'reaction':
+        return '❤️';
       case 'system':
       default:
         return '🔔';
     }
   };
 
+  const getNotificationTitle = (type?: string) => {
+    switch (type) {
+      case 'new_message':
+      case 'message':
+        return 'Tin nhắn mới';
+      case 'group_added':
+        return 'Lời mời vào nhóm';
+      case 'reaction':
+        return 'Cảm xúc tin nhắn';
+      case 'friend':
+        return 'Bạn bè mới';
+      default:
+        return 'Thông báo hệ thống';
+    }
+  };
+
+  const handlePressNotification = (item: AppNotification) => {
+    // 1. Đánh dấu đã đọc
+    markNotificationAsRead(item.id);
+
+    // 2. Mở đúng cuộc trò chuyện
+    if (item.convId) {
+      const targetConv = conversations.find(c => c.id === item.convId);
+      const isGroup = targetConv?.type === 'group';
+
+      let targetUser: User | undefined = targetConv?.user;
+      if (!targetUser) {
+        const foundContact = contacts.find(c => c.id === item.fromUid);
+        targetUser = foundContact || {
+          id: item.fromUid || 'unknown_user',
+          name: item.fromName || 'Người dùng',
+          avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+            item.fromName || 'User'
+          )}&background=4F46E5&color=fff&size=128`,
+          isOnline: false,
+        };
+      }
+
+      navigation.navigate('ChatDetail', {
+        conversationId: item.convId,
+        convType: isGroup ? 'group' : 'direct',
+        name: isGroup ? (targetConv?.name || 'Nhóm trò chuyện') : (targetUser?.name || 'Người dùng'),
+        user: targetUser,
+      });
+    }
+  };
+
   const renderNotificationItem = ({ item }: { item: AppNotification }) => {
+    const isUnread = !item.read;
+
     return (
       <TouchableOpacity
         style={[
           styles.notificationItem,
-          !item.isRead ? styles.itemUnread : styles.itemRead,
+          isUnread ? styles.itemUnread : styles.itemRead,
         ]}
-        onPress={() => markNotificationAsRead(item.id)}
+        onPress={() => handlePressNotification(item)}
         activeOpacity={0.7}>
-        {}
+        {/* ICON LOẠI THÔNG BÁO */}
         <View
           style={[
             styles.iconContainer,
-            !item.isRead ? styles.iconContainerUnread : styles.iconContainerRead,
+            isUnread ? styles.iconContainerUnread : styles.iconContainerRead,
           ]}>
           <Text style={styles.notifEmoji}>{getNotificationIcon(item.type)}</Text>
         </View>
 
-        {}
+        {/* NỘI DUNG THÔNG BÁO */}
         <View style={styles.contentContainer}>
           <View style={styles.titleRow}>
             <Text
               style={[
                 styles.title,
-                !item.isRead ? styles.titleUnread : styles.titleRead,
+                isUnread ? styles.titleUnread : styles.titleRead,
               ]}
               numberOfLines={1}>
-              {item.title}
+              {getNotificationTitle(item.type)}
             </Text>
-            {!item.isRead && <View style={styles.unreadDot} />}
+            {isUnread && <View style={styles.unreadDot} />}
           </View>
 
           <Text
             style={[
               styles.messageText,
-              !item.isRead ? styles.messageUnread : styles.messageRead,
+              isUnread ? styles.messageUnread : styles.messageRead,
             ]}
             numberOfLines={2}>
-            {item.content}
+            {item.text}
           </Text>
 
           <View style={styles.metaRow}>
@@ -78,9 +138,9 @@ export const NotificationsScreen: React.FC = () => {
             <Text
               style={[
                 styles.statusBadge,
-                !item.isRead ? styles.statusBadgeUnread : styles.statusBadgeRead,
+                isUnread ? styles.statusBadgeUnread : styles.statusBadgeRead,
               ]}>
-              {item.isRead ? '✓ Đã đọc' : 'Chưa đọc (Chạm để đọc)'}
+              {isUnread ? 'Chưa đọc' : 'Đã đọc'}
             </Text>
           </View>
         </View>
@@ -92,7 +152,7 @@ export const NotificationsScreen: React.FC = () => {
     <SafeAreaView style={styles.safeArea}>
       <StatusBar barStyle="dark-content" />
       <View style={styles.container}>
-        {}
+        {/* HEADER */}
         <View style={styles.header}>
           <View>
             <Text style={styles.headerTitle}>Thông báo</Text>
@@ -103,17 +163,18 @@ export const NotificationsScreen: React.FC = () => {
             </Text>
           </View>
 
-          {unreadNotificationsCount > 0 && (
+          {/* NÚT ĐÁNH DẤU TẤT CẢ ĐÃ ĐỌC */}
+          {notifications.length > 0 && (
             <TouchableOpacity
               style={styles.markAllButton}
               onPress={markAllNotificationsAsRead}
               activeOpacity={0.8}>
-              <Text style={styles.markAllText}>Đọc tất cả</Text>
+              <Text style={styles.markAllText}>Đánh dấu tất cả đã đọc</Text>
             </TouchableOpacity>
           )}
         </View>
 
-        {}
+        {/* DANH SÁCH THÔNG BÁO THẬT TỪ FIREBASE */}
         <FlatList
           data={notifications}
           keyExtractor={item => item.id}
@@ -123,9 +184,9 @@ export const NotificationsScreen: React.FC = () => {
           ListEmptyComponent={
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyIcon}>🔔</Text>
-              <Text style={styles.emptyTitle}>Không có thông báo nào</Text>
+              <Text style={styles.emptyTitle}>Chưa có thông báo nào</Text>
               <Text style={styles.emptySubtitle}>
-                Bạn sẽ nhận được thông báo khi có tin nhắn mới hoặc cập nhật hệ thống
+                Bạn sẽ nhận được thông báo khi có tin nhắn mới, được thêm vào nhóm hoặc có người thả cảm xúc vào tin nhắn của bạn.
               </Text>
             </View>
           }
@@ -148,59 +209,59 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingVertical: 14,
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderLight,
   },
   headerTitle: {
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '800',
     color: colors.textPrimary,
   },
   headerSubtitle: {
-    fontSize: 13,
+    fontSize: 12.5,
     color: colors.textSecondary,
     marginTop: 2,
   },
   markAllButton: {
     backgroundColor: colors.primaryLight,
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
   },
   markAllText: {
     color: colors.primary,
-    fontSize: 12.5,
+    fontSize: 12,
     fontWeight: '700',
   },
   listContent: {
-    paddingVertical: 8,
+    paddingVertical: 4,
   },
   notificationItem: {
     flexDirection: 'row',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: colors.borderLight,
   },
   itemUnread: {
-    backgroundColor: '#EFF6FF', 
+    backgroundColor: '#EFF6FF',
   },
   itemRead: {
     backgroundColor: colors.surface,
   },
   iconContainer: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
   },
   iconContainerUnread: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: colors.primaryLight,
   },
   iconContainerRead: {
     backgroundColor: colors.surfaceAlt,
@@ -218,42 +279,41 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   title: {
-    fontSize: 15,
-    flex: 1,
-    marginRight: 8,
+    fontSize: 14.5,
   },
   titleUnread: {
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.textPrimary,
   },
   titleRead: {
-    fontWeight: '500',
+    fontWeight: '600',
     color: colors.textSecondary,
   },
   unreadDot: {
-    width: 9,
-    height: 9,
-    borderRadius: 4.5,
-    backgroundColor: colors.primary,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.accent,
   },
   messageText: {
-    fontSize: 13,
+    fontSize: 13.5,
     lineHeight: 18,
     marginBottom: 6,
   },
   messageUnread: {
     color: colors.textPrimary,
+    fontWeight: '500',
   },
   messageRead: {
     color: colors.textSecondary,
   },
   metaRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
   timestamp: {
-    fontSize: 11.5,
+    fontSize: 11,
     color: colors.textMuted,
   },
   statusBadge: {
@@ -273,7 +333,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
   },
   emptyIcon: {
-    fontSize: 44,
+    fontSize: 48,
     marginBottom: 12,
   },
   emptyTitle: {

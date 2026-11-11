@@ -35,32 +35,51 @@ export const HomeScreen: React.FC = () => {
   });
 
   const handleOpenChat = (conversation: Conversation) => {
-    const otherUserId = conversation.user?.id || conversation.id;
-    markConversationAsRead(otherUserId);
+    markConversationAsRead(conversation.id);
 
+    const isGroup = conversation.type === 'group';
     const targetUser: User = conversation.user || {
-      id: otherUserId,
-      name: 'Người dùng',
-      avatar: 'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128',
+      id: conversation.id,
+      name: conversation.name || 'Nhóm trò chuyện',
+      avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(
+        conversation.name || 'Group'
+      )}&background=6366F1&color=fff&size=128`,
       isOnline: false,
     };
 
     navigation.navigate('ChatDetail', {
       conversationId: conversation.id,
+      convType: isGroup ? 'group' : 'direct',
+      name: isGroup ? (conversation.name || 'Nhóm trò chuyện') : targetUser.name,
       user: targetUser,
     });
   };
 
   const renderConversationItem = ({ item }: { item: Conversation }) => {
+    const isGroup = item.type === 'group';
     const hasUnread = (item.unreadCount || 0) > 0;
     const targetUserId = item.user?.id || item.id;
-    const liveContact = contacts.find(c => c.id === targetUserId);
-    const isOnline = liveContact ? liveContact.isOnline : (item.user?.isOnline ?? false);
+    const liveContact = !isGroup ? contacts.find(c => c.id === targetUserId) : null;
+    const isOnline = liveContact ? liveContact.isOnline : false;
     const avatar =
-      liveContact?.avatar ||
       item.user?.avatar ||
+      liveContact?.avatar ||
       'https://ui-avatars.com/api/?name=User&background=4F46E5&color=fff&size=128';
-    const userName = liveContact?.name || item.user?.name || 'Người dùng';
+    const userName = isGroup
+      ? (item.name || 'Nhóm trò chuyện')
+      : (liveContact?.name || item.user?.name || 'Người dùng');
+
+    const rawLastMsg = item.lastMessage || '';
+    let displayLastMsg = rawLastMsg;
+    if (rawLastMsg.startsWith('📍 Tọa độ:') || rawLastMsg === '📍 Vị trí') {
+      displayLastMsg = '📍 Vị trí';
+    } else if (
+      rawLastMsg === '📷 Hình ảnh' ||
+      (rawLastMsg.startsWith('http') &&
+        (rawLastMsg.includes('cloudinary') || rawLastMsg.match(/\.(jpg|jpeg|png|webp|gif)/i)))
+    ) {
+      displayLastMsg = '📷 Hình ảnh';
+    }
 
     return (
       <TouchableOpacity
@@ -70,16 +89,24 @@ export const HomeScreen: React.FC = () => {
         <View style={styles.avatarContainer}>
           <Image source={{ uri: avatar }} style={styles.avatar} />
           {isOnline && <View style={styles.onlineDot} />}
+          {isGroup && (
+            <View style={styles.groupBadgeDot}>
+              <Text style={styles.groupBadgeText}>👥</Text>
+            </View>
+          )}
         </View>
 
-        {}
+        {/* Thông tin cuộc trò chuyện */}
         <View style={styles.chatDetails}>
           <View style={styles.chatHeaderRow}>
-            <Text
-              style={[styles.userName, hasUnread && styles.userNameBold]}
-              numberOfLines={1}>
-              {userName}
-            </Text>
+            <View style={styles.nameWithGroupRow}>
+              {isGroup && <Text style={styles.groupTagText}>[Nhóm] </Text>}
+              <Text
+                style={[styles.userName, hasUnread && styles.userNameBold]}
+                numberOfLines={1}>
+                {userName}
+              </Text>
+            </View>
             <Text
               style={[styles.timestamp, hasUnread && styles.timestampUnread]}>
               {item.lastMessageTime}
@@ -88,9 +115,13 @@ export const HomeScreen: React.FC = () => {
 
           <View style={styles.messageRow}>
             <Text
-              style={[styles.lastMessage, hasUnread && styles.lastMessageUnread]}
+              style={[
+                styles.lastMessage,
+                hasUnread && styles.lastMessageUnread,
+                displayLastMsg === 'Tin nhắn đã được thu hồi' && styles.lastMessageRecalled,
+              ]}
               numberOfLines={1}>
-              {item.lastMessage}
+              {displayLastMsg}
             </Text>
             {hasUnread && (
               <View style={styles.badge}>
@@ -118,9 +149,13 @@ export const HomeScreen: React.FC = () => {
             </Text>
           </View>
           <View style={styles.headerActions}>
-            <View style={styles.headerIconButton}>
-              <Text style={styles.headerIcon}>💬</Text>
-            </View>
+            <TouchableOpacity
+              style={styles.createGroupHeaderBtn}
+              onPress={() => navigation.navigate('CreateGroup')}
+              activeOpacity={0.8}>
+              <Text style={styles.createGroupBtnIcon}>👥+</Text>
+              <Text style={styles.createGroupBtnText}>Tạo nhóm</Text>
+            </TouchableOpacity>
           </View>
         </View>
 
@@ -322,6 +357,49 @@ const styles = StyleSheet.create({
   lastMessageUnread: {
     color: colors.textPrimary,
     fontWeight: '600',
+  },
+  lastMessageRecalled: {
+    fontStyle: 'italic',
+    color: colors.textMuted,
+  },
+  createGroupHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primaryLight,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 20,
+  },
+  createGroupBtnIcon: {
+    fontSize: 14,
+    marginRight: 4,
+  },
+  createGroupBtnText: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  groupBadgeDot: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    padding: 1,
+  },
+  groupBadgeText: {
+    fontSize: 11,
+  },
+  nameWithGroupRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 8,
+  },
+  groupTagText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.primary,
   },
   badge: {
     backgroundColor: colors.badgeBg,

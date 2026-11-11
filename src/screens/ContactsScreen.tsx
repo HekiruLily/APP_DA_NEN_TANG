@@ -40,7 +40,7 @@ export const ContactsScreen: React.FC = () => {
 
   const handleOpenChatWithUser = (contact: User) => {
     
-    const existingConv = conversations.find(c => c.user.id === contact.id);
+    const existingConv = conversations.find(c => c.user?.id === contact.id);
 
     navigation.navigate('ChatDetail', {
       conversationId: existingConv?.id,

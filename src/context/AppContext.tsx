@@ -6,7 +6,6 @@ import React, {
   ReactNode,
 } from 'react';
 import { User, Conversation, Message, AppNotification, UserSettings } from '../types';
-import { mockNotifications } from '../data/mockData';
 import {
   registerWithEmail,
   loginWithEmail,
@@ -19,7 +18,13 @@ import {
   listenConversations,
   sendMessage as sendChatMessage,
   markConversationAsRead as markChatAsRead,
+  getChatId,
 } from '../services/chatService';
+import {
+  listenNotifications,
+  markNotificationAsRead as serviceMarkNotifAsRead,
+  markAllNotificationsAsRead as serviceMarkAllNotifsAsRead,
+} from '../services/notificationService';
 
 interface AppContextType {
   isLoggedIn: boolean;
@@ -35,12 +40,14 @@ interface AppContextType {
   register: (name: string, email: string, pass: string) => Promise<void>;
   logout: () => Promise<void>;
   sendMessage: (
-    recipient: User,
-    text: string,
-    type?: 'text' | 'location',
-    location?: { latitude: number; longitude: number }
+    recipientOrConvId: User | string,
+    text?: string,
+    type?: 'text' | 'location' | 'image',
+    location?: { latitude: number; longitude: number },
+    imageUrl?: string,
+    recipientUser?: User
   ) => Promise<void>;
-  markConversationAsRead: (otherUserId: string) => void;
+  markConversationAsRead: (convIdOrOtherUserId: string) => void;
   markNotificationAsRead: (id: string) => void;
   markAllNotificationsAsRead: () => void;
   updateSetting: (key: keyof UserSettings, value: boolean) => void;
@@ -60,7 +67,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [user, setUser] = useState<User>(defaultUser);
   const [contacts, setContacts] = useState<User[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [notifications, setNotifications] = useState<AppNotification[]>(mockNotifications);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [settings, setSettings] = useState<UserSettings>({
     notificationsEnabled: true,
     darkMode: false,
@@ -68,7 +75,6 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showOnlineStatus: true,
   });
 
-  
   useEffect(() => {
     const unsubscribeAuth = subscribeToAuthChanges(fbUser => {
       if (fbUser) {
@@ -91,6 +97,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setUser(defaultUser);
         setContacts([]);
         setConversations([]);
+        setNotifications([]);
       }
     });
 
@@ -99,86 +106,103 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, []);
 
-  
   useEffect(() => {
     if (!user.id) return;
 
-    
+    // 1. Trực tuyến và lastSeen
     const unsubPresence = setupPresence(user.id);
 
-    
+    // 2. Danh bạ
     const unsubContacts = listenUsers(user.id, updatedContacts => {
       setContacts(updatedContacts);
     });
 
-    
+    // 3. Danh sách cuộc trò chuyện (1-1 và Group)
     const unsubConversations = listenConversations(user.id, updatedConvs => {
       setConversations(updatedConvs);
     });
 
-    
+    // 4. Lắng nghe thông báo thật từ Firebase notifications/{uid}
+    const unsubNotifications = listenNotifications(user.id, realNotifs => {
+      setNotifications(realNotifs);
+    });
+
     return () => {
       unsubPresence();
       unsubContacts();
       unsubConversations();
+      unsubNotifications();
     };
   }, [user.id]);
 
-  
   const login = async (email: string, pass: string) => {
     const loggedInUser = await loginWithEmail(email, pass);
     setUser(loggedInUser);
     setIsLoggedIn(true);
   };
 
-  
   const register = async (name: string, email: string, pass: string) => {
     const newUser = await registerWithEmail(name, email, pass);
     setUser(newUser);
     setIsLoggedIn(true);
   };
 
-  
   const logout = async () => {
     await logoutUser();
     setUser(defaultUser);
     setIsLoggedIn(false);
     setContacts([]);
     setConversations([]);
+    setNotifications([]);
   };
 
-  
   const sendMessage = async (
-    recipient: User,
-    text: string,
-    type: 'text' | 'location' = 'text',
-    location?: { latitude: number; longitude: number }
+    recipientOrConvId: User | string,
+    text: string = '',
+    type: 'text' | 'location' | 'image' = 'text',
+    location?: { latitude: number; longitude: number },
+    imageUrl?: string,
+    recipientUser?: User
   ) => {
     if (!user.id) return;
+
+    let convId = '';
+    let targetRecipient = recipientUser;
+
+    if (typeof recipientOrConvId === 'string') {
+      convId = recipientOrConvId;
+    } else {
+      targetRecipient = recipientOrConvId;
+      convId = getChatId(user.id, targetRecipient.id);
+    }
+
     await sendChatMessage({
+      convId,
       sender: user,
-      recipient,
+      recipient: targetRecipient,
       text,
       type,
       location,
+      imageUrl,
     });
   };
 
-  
-  const markConversationAsRead = (otherUserId: string) => {
-    if (!user.id) return;
-    markChatAsRead(user.id, otherUserId);
+  const markConversationAsRead = (convIdOrOtherUserId: string) => {
+    if (!user.id || !convIdOrOtherUserId) return;
+    const convId = convIdOrOtherUserId.includes('_')
+      ? convIdOrOtherUserId
+      : getChatId(user.id, convIdOrOtherUserId);
+    markChatAsRead(user.id, convId);
   };
 
-  
   const markNotificationAsRead = (id: string) => {
-    setNotifications(prev =>
-      prev.map(n => (n.id === id ? { ...n, isRead: true } : n))
-    );
+    if (!user.id || !id) return;
+    serviceMarkNotifAsRead(user.id, id);
   };
 
   const markAllNotificationsAsRead = () => {
-    setNotifications(prev => prev.map(n => ({ ...n, isRead: true })));
+    if (!user.id) return;
+    serviceMarkAllNotifsAsRead(user.id, notifications);
   };
 
   const updateSetting = (key: keyof UserSettings, value: boolean) => {
@@ -188,7 +212,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
   };
 
-  const unreadNotificationsCount = notifications.filter(n => !n.isRead).length;
+  // Đếm số thông báo chưa đọc thật từ Firebase
+  const unreadNotificationsCount = notifications.filter(n => !n.read).length;
+
+  // Đếm tổng số tin nhắn chưa đọc
   const totalUnreadChatsCount = conversations.reduce(
     (acc, conv) => acc + (conv.unreadCount || 0),
     0

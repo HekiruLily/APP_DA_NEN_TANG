@@ -1,97 +1,163 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# HƯỚNG DẪN CẤU HÌNH VÀ CHẠY DỰ ÁN CHAT APP - BÀI THỰC HÀNH 6
+**Môn học:** Phát triển ứng dụng đa nền tảng  
+**Công nghệ:** React Native CLI, Firebase Realtime Database, Cloudinary Unsigned Upload  
 
-# Getting Started
+---
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+## 1. CẤU HÌNH FIREBASE
 
-## Step 1: Start Metro
+### 1.1. Cấu hình Realtime Database Rules
+1. Mở **[Firebase Console](https://console.firebase.google.com/)** $\to$ Chọn dự án của bạn.
+2. Vào **Realtime Database** $\to$ Chọn tab **Rules**.
+3. Sao chép toàn bộ nội dung file `database.rules.json` trong thư mục dự án và dán vào, sau đó nhấn **Publish**:
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+```json
+{
+  "rules": {
+    "users": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    },
+    "conversations": {
+      "$convId": {
+        ".read": "auth != null && data.child('members/' + auth.uid).val() === true",
+        ".write": "auth != null && (
+          (!data.exists() && newData.child('members/' + auth.uid).val() === true) ||
+          (data.exists() && data.child('members/' + auth.uid).val() === true)
+        )"
+      }
+    },
+    "messages": {
+      "$convId": {
+        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        "$msgId": {
+          ".write": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true && (
+            (!data.exists() && newData.child('senderId').val() === auth.uid) ||
+            (data.exists() && data.child('senderId').val() === auth.uid && newData.child('recalled').val() === true)
+          )",
+          "reactions": {
+            "$uid": {
+              ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+            }
+          }
+        }
+      }
+    },
+    "typing": {
+      "$convId": {
+        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+        }
+      }
+    },
+    "readStatus": {
+      "$convId": {
+        ".read": "auth != null && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true",
+        "$uid": {
+          ".write": "auth != null && auth.uid === $uid && root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true"
+        }
+      }
+    },
+    "userChats": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$convId": {
+          ".write": "auth != null && (
+            auth.uid === $uid ||
+            root.child('conversations/' + $convId + '/members/' + auth.uid).val() === true
+          )"
+        }
+      }
+    },
+    "notifications": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        "$notifId": {
+          ".write": "auth != null && (auth.uid === $uid || (!data.exists() && newData.child('fromUid').val() === auth.uid))"
+        }
+      }
+    },
+    "activeChat": {
+      "$uid": {
+        ".read": "auth != null",
+        ".write": "auth != null && auth.uid === $uid"
+      }
+    }
+  }
+}
+```
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
 
-```sh
-# Using npm
+## 2. CẤU HÌNH CLOUDINARY (UNSIGNED UPLOAD PRESET)
+
+Ứng dụng tải ảnh trực tiếp qua REST API lên Cloudinary với Unsigned Upload Preset (không lưu API Secret trong mã nguồn để đảm bảo bảo mật):
+
+- **Cloud Name**: `abubl1yi`
+- **Upload Preset**: `ChatApp` (Signing Mode: `Unsigned`)
+- **Tập tin cấu hình**: `src/services/uploadService.ts`
+- **Tối ưu hóa ảnh**: Giới hạn kích thước cạnh dài $\le 1024$px trước khi tải lên (`maxWidth: 1024, maxHeight: 1024, quality: 0.8`).
+
+---
+
+## 3. CÁC TÍNH NĂNG ĐÃ TRIỂN KHAI
+
+### Phần A: Bắt buộc (8 điểm)
+1. **Trạng thái cuộc trò chuyện (1.5 điểm)**:
+   - Hiển thị `"đang soạn tin…"` theo thời gian thực khi đối phương gõ; tự tắt sau 3 giây hoặc khi gửi tin / rời màn hình.
+   - Tin cuối cùng hiển thị `"Đã gửi"` hoặc `"Đã xem · HH:mm"` (thời gian xem).
+   - Khi đối phương offline, hiển thị `"Hoạt động X phút trước"`, `"Hoạt động X giờ trước"`, hoặc `"Hoạt động vừa xong"`.
+   - Sử dụng `onDisconnect()` của Realtime Database để tránh kẹt trạng thái online và typing khi app tắt đột ngột.
+2. **Thu hồi và tương tác với tin nhắn (1.5 điểm)**:
+   - Nhấn giữ tin nhắn để mở menu: Sao chép, Thu hồi (chỉ với tin của mình), Thả cảm xúc (`👍 ❤️ 😂 😮 😢`).
+   - Tin đã thu hồi hiển thị `"Tin nhắn đã được thu hồi"` trên mọi máy (`recalled: true`).
+   - Cập nhật dòng tin cuối ở màn hình Home khi tin cuối bị thu hồi.
+   - Cảm xúc hiển thị dưới dạng badge kèm số lượng nếu nhiều người cùng thả.
+3. **Gửi ảnh (2.0 điểm)**:
+   - Nút 📷 với 2 tùy chọn: Chụp ảnh mới hoặc Chọn từ thư viện (`react-native-image-picker`).
+   - Xin quyền camera (`PermissionsAndroid`).
+   - Thu nhỏ ảnh cạnh dài $\le 1024$px và tải lên Cloudinary.
+   - Bong bóng tạm hiển thị hình ảnh preview kèm vòng xoay loading. Nếu tải lỗi có nút **"Thử lại"** và **"Hủy"**.
+   - Nhấn vào ảnh để xem toàn màn hình.
+   - Ở màn hình Home, tin cuối là ảnh hiển thị `"📷 Hình ảnh"`, tin cuối là vị trí hiển thị `"📍 Vị trí"`.
+4. **Chat nhóm (2.0 điểm)**:
+   - Màn hình Tạo nhóm với ô đặt tên nhóm và danh sách chọn thành viên có checkbox (tối thiểu 2 người ngoài bản thân).
+   - Trong nhóm, tin của người khác hiển thị tên người gửi phía trên bong bóng.
+   - Tiêu đề nhóm hiển thị tên nhóm và số thành viên đang online (`X thành viên · Y online`).
+   - Màn hình Home hiển thị đồng thời cả chat 1-1 và chat nhóm, sắp xếp theo tin mới nhất, mỗi thành viên có số tin chưa đọc riêng.
+5. **Màn hình Thông báo thật (1.0 điểm)**:
+   - Tự động ghi thông báo vào `notifications/{uid}` khi:
+     - Có tin mới mà người dùng không ở trong cuộc trò chuyện đó (dựa vào `activeChat/{uid}`).
+     - Được thêm vào nhóm mới.
+     - Có người thả cảm xúc vào tin của mình.
+   - Tab Thông báo có badge hiển thị số thông báo chưa đọc.
+   - Nhấn vào thông báo sẽ mở đúng cuộc trò chuyện và đánh dấu đã đọc.
+   - Có nút **"Đánh dấu tất cả đã đọc"**.
+
+### Phần B: Yêu cầu kỹ thuật
+- Ghi tin nhắn, lastMessage và tăng unread bằng `increment(1)` trong **MỘT LỆNH `update()` multi-path update**.
+- Tải tin nhắn phân trang: 20 tin mới nhất (`limitToLast(20)`), kéo lên tải thêm 20 tin cũ hơn không bị nhảy danh sách.
+- Hủy toàn bộ listener trong hàm cleanup của `useEffect`.
+- Gom mã nguồn logic vào thư mục `src/services/` (`chatService.ts`, `groupService.ts`, `uploadService.ts`, `notificationService.ts`).
+
+---
+
+## 4. HƯỚNG DẪN CÀI ĐẶT VÀ CHẠY ỨNG DỤNG
+
+### Bước 1: Cài đặt dependencies
+```bash
+npm install
+```
+
+### Bước 2: Khởi động Metro Bundler
+```bash
 npm start
-
-# OR using Yarn
-yarn start
 ```
 
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
+### Bước 3: Chạy ứng dụng trên thiết bị Android / máy ảo
+```bash
 npm run android
-
-# OR using Yarn
-yarn android
 ```
-
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
-```
-
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
-
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
-
-## Step 3: Modify your app
-
-Now that you have successfully run the app, let's make changes!
-
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
-
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
-
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
-
-## Congratulations! :tada:
-
-You've successfully run and modified your React Native App. :partying_face:
-
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.

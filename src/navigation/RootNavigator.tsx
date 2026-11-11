@@ -16,6 +16,7 @@ import { ContactsScreen } from '../screens/ContactsScreen';
 import { NotificationsScreen } from '../screens/NotificationsScreen';
 import { SettingsScreen } from '../screens/SettingsScreen';
 import { ChatDetailScreen } from '../screens/ChatDetailScreen';
+import { CreateGroupScreen } from '../screens/CreateGroupScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator<MainTabParamList>();
@@ -133,6 +134,7 @@ export const RootNavigator: React.FC = () => {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Register" component={RegisterScreen} />
         <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+        <Stack.Screen name="CreateGroup" component={CreateGroupScreen} />
         <Stack.Screen
           name="ChatDetail"
           component={ChatDetailScreen}
